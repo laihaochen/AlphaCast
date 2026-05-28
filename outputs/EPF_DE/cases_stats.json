@@ -1,0 +1,11 @@
+{
+  "AutoARIMA": 2,
+  "iTransformer": 50,
+  "PatchTST": 33,
+  "TimesNet": 7,
+  "Prophet": 3,
+  "AutoCES": 2,
+  "DLinear": 5,
+  "DynamicOptimizedTheta": 2,
+  "SeasonalNaive": 1
+}

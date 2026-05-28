@@ -55,8 +55,8 @@ Thumbs.db
 # Jupyter
 .ipynb_checkpoints/
 
-# Project-specific: experiment outputs
-outputs/
+# Project-specific: cloned THUML library
+.thuml/
 
 # Project-specific: DeepLearningCheckpoints、foundation_models
 castagent/DeepLearningCheckpoints/

@@ -1,0 +1,15 @@
+=== Experiment Summary ===
+    dataset          MSE        MAE    sMAPE         model
+         BS 61949.372008 200.211241 0.918873 deterministic
+     EPF_BE   905.927851  14.931536 0.251941 deterministic
+     EPF_DE   346.753649  12.757223 0.433920 deterministic
+     EPF_FR  1020.595027  13.921280 0.232094 deterministic
+     EPF_NP    66.871546   5.790115 0.135074 deterministic
+    EPF_PJM    87.876456   6.742492 0.216927 deterministic
+      ETTh1     8.473138   2.171910 0.262099 deterministic
+      ETTh2    53.984160   5.605359 0.198084 deterministic
+      ETTm1     4.453631   1.390695 0.159758 deterministic
+      ETTm2    17.574943   2.758903 0.078138 deterministic
+      MOPEX     6.561329   1.750493 1.046095 deterministic
+POWER_Windy  7815.381343  41.093530 1.062175 deterministic
+POWER_Sunny    37.157025   3.659754 1.528047 deterministic

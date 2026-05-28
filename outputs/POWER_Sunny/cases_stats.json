@@ -1,0 +1,12 @@
+{
+  "DLinear": 11,
+  "PatchTST": 78,
+  "Sundial": 1,
+  "Autoformer": 5,
+  "iTransformer": 46,
+  "TimesNet": 22,
+  "Theta": 5,
+  "CrostonClassic": 1,
+  "ZeroModel": 5,
+  "Prophet": 1
+}

@@ -14,7 +14,7 @@ from ..models.base import (
     get_default_models,
 )
 if TYPE_CHECKING:
-    from castmind.config import DatasetConfig
+    from ..config import DatasetConfig
 from ..utils.time import generate_future_timestamps
 
 
@@ -27,7 +27,11 @@ def forecast_with_model(
     **kwargs
 ) -> np.ndarray:
     if dataset is not None:
-        configure_deep_learning_runtime(dataset.checkpoints, dataset.predicted_window)
+        configure_deep_learning_runtime(
+            dataset.checkpoints,
+            dataset.predicted_window,
+            dataset_name=getattr(dataset, "name", None),
+        )
 
     models = {m.alias: m for m in get_default_models()}
     if model_name not in models:

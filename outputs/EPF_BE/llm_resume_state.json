@@ -1,0 +1,9 @@
+{
+  "current_collected": 0,
+  "current_len": 0,
+  "step_index": 0,
+  "total_needed": 8736,
+  "total_len": 8736,
+  "stride": 96,
+  "horizon": 96
+}

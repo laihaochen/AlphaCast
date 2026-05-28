@@ -1,0 +1,29 @@
+{
+  "exogenous_vars": [
+    "mufl",
+    "hufl",
+    "lull"
+  ],
+  "exogenous_feature_selection": {
+    "mufl": [
+      "basic_count",
+      "basic_mean",
+      "basic_std"
+    ],
+    "hufl": [
+      "basic_count",
+      "basic_mean",
+      "basic_std"
+    ],
+    "lull": [
+      "basic_count",
+      "basic_mean",
+      "basic_std"
+    ]
+  },
+  "exogenous_correlations": {
+    "hufl": -0.23418556084625053,
+    "mufl": -0.23573762292562644,
+    "lull": -0.21927656596722772
+  }
+}

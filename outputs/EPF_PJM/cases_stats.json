@@ -1,0 +1,11 @@
+{
+  "iTransformer": 37,
+  "TimesNet": 15,
+  "PatchTST": 37,
+  "Prophet": 8,
+  "DLinear": 2,
+  "CrostonClassic": 3,
+  "AutoARIMA": 1,
+  "SeasonalNaive": 1,
+  "Theta": 1
+}

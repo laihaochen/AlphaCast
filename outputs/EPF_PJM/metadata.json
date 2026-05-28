@@ -1,0 +1,9 @@
+{
+  "dataset": "EPF_PJM",
+  "memory_path": "outputs/EPF_PJM/memory.json",
+  "case_base_path": "outputs/EPF_PJM/case_base.json",
+  "frequency": "h",
+  "periodicity_lag": 1,
+  "look_back": 96,
+  "predicted_window": 96
+}

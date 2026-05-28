@@ -62,7 +62,7 @@ def evaluate_models_on_window(
             if err < best_err:
                 best_err, best_name = err, m.alias
         except Exception as e:
-            raise ValueError(f"Error fitting model {m.alias} : {e}")
+            print(f"[warn] Model {m.alias} failed on window: {e}. Skipping this model.")
             continue
     return best_name, best_err
 
@@ -96,6 +96,7 @@ def analyze_training(
         configure_deep_learning_runtime(
             dataset_cfg.checkpoints,
             dataset_cfg.predicted_window,
+            dataset_name=dataset_name,
         )
     else:
         configure_deep_learning_runtime(None, None)

@@ -8,23 +8,23 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from castmind.config import DatasetConfig, ExperimentConfig
-from castmind.data_loader import TIME_COL, infer_target_column
-from castmind.eval import align_predictions, mae, mse, smape
-from castmind.features import extract_target_features, extract_exogenous_features
-from castmind.features.extract_exogenous import (
+from ..config import DatasetConfig, ExperimentConfig
+from ..data_loader import TIME_COL, infer_target_column
+from ..eval import align_predictions, mae, mse, smape
+from ..features import extract_target_features, extract_exogenous_features
+from ..features.extract_exogenous import (
     EXOGENOUS_BASES,
     EXOGENOUS_DESCRIPTIONS,
     _find_station_columns,
 )
-from castmind.tools.analysis import (
+from ..tools.analysis import (
     analyze_training,
     choose_cluster_by_similarity,
     choose_model_by_similarity,
     choose_neighbor_by_similarity,
 )
-from castmind.tools.forecast import forecast_with_model, save_predictions_csv
-from castmind.utils.time import (
+from ..tools.forecast import forecast_with_model, save_predictions_csv
+from ..utils.time import (
     CaseEntry,
     CaseNeighbor,
     ClusterEntry,
@@ -511,10 +511,14 @@ def assess_forecast(
 
 
 def deterministic_run_for_dataset(cfg: ExperimentConfig, ds) -> dict:
-    # Load training data
+    # Load training + test data
     data = pd.read_csv(ds.training_csv)
     data[TIME_COL] = pd.to_datetime(data[TIME_COL])
     data = data.sort_values(TIME_COL).reset_index(drop=True)
+
+    test_df = pd.read_csv(ds.test_csv)
+    test_df[TIME_COL] = pd.to_datetime(test_df[TIME_COL])
+    test_df = test_df.sort_values(TIME_COL).reset_index(drop=True)
 
     _ = analyze_training(
         data,
@@ -534,8 +538,6 @@ def deterministic_run_for_dataset(cfg: ExperimentConfig, ds) -> dict:
 
     target_col = infer_target_column(data, ds.name)
     y = data[target_col].to_numpy(dtype=float)
-    current_window = y[-ds.look_back :]
-    current_ts_window = data[TIME_COL].iloc[-ds.look_back:]
 
     with open(case_base_path, "r", encoding="utf-8") as f:
         raw_cases = json.load(f)
@@ -579,80 +581,116 @@ def deterministic_run_for_dataset(cfg: ExperimentConfig, ds) -> dict:
         except Exception:
             pass
 
-    pre_model = choose_model_by_similarity(cases, current_window)
-    neighbor_lookback, neighbor_pred = choose_neighbor_by_similarity(cases_neighbors, current_window)
-    config_sel_model = getattr(cfg, "sel_model", None)
-    model_name = config_sel_model or pre_model
-    override_reason = None
-    seas_val = None
-    if config_sel_model:
-        override_reason = "sel_model"
-    elif getattr(cfg, "use_features", True):
-        if (
-            isinstance(sel_cfg, dict)
-            and isinstance(sel_cfg.get("force_model"), str)
-            and sel_cfg.get("force_model")
-        ):
-            model_name = str(sel_cfg["force_model"]) or model_name
-            override_reason = "force_model"
-        else:
-            try:
-                seas_val = float(
-                    feats.get("seasonal_strength", feats.get("seas_acf1", 0.0))
+    # Predict over the TEST period using sliding windows, matching the test-set
+    # timeline.  Each window uses similarity-based model selection as in the
+    # LLM-orchestrated path.
+    L = int(ds.look_back)
+    H = int(ds.predicted_window)
+    stride = int(ds.sliding_window) if ds.sliding_window and int(ds.sliding_window) > 0 else H
+    test_y = test_df[target_col].to_numpy(dtype=float)
+    test_ts = test_df[TIME_COL]
+
+    target_len = len(test_df) - L
+    all_predictions: list[float] = []
+    all_timestamps: list[pd.Timestamp] = []
+
+    offset = 0
+    while offset + H <= target_len:
+        idx = offset + L
+        # Current lookback window from the test set
+        cur_win = test_y[offset:idx]
+        cur_ts = test_ts.iloc[offset:idx]
+
+        pre_model = choose_model_by_similarity(cases, cur_win)
+        config_sel_model = getattr(cfg, "sel_model", None)
+        model_name = config_sel_model or pre_model
+        override_reason = None
+        seas_val = None
+        if config_sel_model:
+            override_reason = "sel_model"
+        elif getattr(cfg, "use_features", True):
+            if (
+                isinstance(sel_cfg, dict)
+                and isinstance(sel_cfg.get("force_model"), str)
+                and sel_cfg.get("force_model")
+            ):
+                model_name = str(sel_cfg["force_model"]) or model_name
+                override_reason = "force_model"
+            else:
+                try:
+                    seas_val = float(
+                        feats.get("seasonal_strength", feats.get("seas_acf1", 0.0))
+                    )
+                except Exception:
+                    seas_val = None
+                prefer_seasonal = (
+                    bool(sel_cfg.get("prefer_seasonal_naive_if_seasonal", False))
+                    if isinstance(sel_cfg, dict)
+                    else False
                 )
-            except Exception:
-                seas_val = None
-            prefer_seasonal = (
-                bool(sel_cfg.get("prefer_seasonal_naive_if_seasonal", False))
-                if isinstance(sel_cfg, dict)
-                else False
-            )
-            if prefer_seasonal and seas_val is not None and seas_val >= 0.6:
-                model_name = "SeasonalNaive"
-                override_reason = "prefer_seasonal_naive_if_seasonal"
+                if prefer_seasonal and seas_val is not None and seas_val >= 0.6:
+                    model_name = "SeasonalNaive"
+                    override_reason = "prefer_seasonal_naive_if_seasonal"
 
-    if override_reason:
-        print(
-            f"[info] Model selection: similarity suggested={pre_model} -> overridden with {model_name} "
-            f"(reason={override_reason}, seasonal_strength={seas_val})"
+        preds = forecast_with_model(
+            model_name,
+            cur_win,
+            H,
+            season_length=int(memory.get("periodicity_lag", 1)),
+            dataset=ds,
+            timestamps=cur_ts,
         )
-    else:
-        print(f"[info] Model selection: similarity suggested={model_name}")
 
-    preds = forecast_with_model(
-        model_name,
-        current_window,
-        ds.predicted_window,
-        season_length=int(memory.get("periodicity_lag", 1)),
-        dataset=ds,
-        timestamps=current_ts_window
-    )
+        _mem_freq = memory.get("frequency")
+        if isinstance(_mem_freq, str):
+            _mem_freq_clean = _mem_freq.strip()
+            if _mem_freq_clean.lower() in {"h", "d", "w", "m", "s"}:
+                _mem_freq = _mem_freq_clean.upper()
+            else:
+                _mem_freq = _mem_freq_clean
+        last_known_ts = test_ts.iloc[idx - 1]  # last timestamp in lookback window
+        future_ts = generate_future_timestamps(pd.Timestamp(last_known_ts), H, _mem_freq)
 
-    last_ts = data[TIME_COL].iloc[-1]
+        # Take only as many predictions as we have timestamps for
+        n = min(H, len(future_ts), len(preds))
+        all_predictions.extend(preds[:n].tolist())
+        all_timestamps.extend(future_ts[:n])
+
+        offset += stride
+
+    # Tail: if stride doesn't divide target_len evenly, predict the remaining points
+    remaining = len(test_df) - (offset + L)
+    if remaining > 0:
+        tail_len = min(remaining, H)
+        cur_win = test_y[offset : offset + L]
+        cur_ts = test_ts.iloc[offset : offset + L]
+        preds = forecast_with_model(
+            model_name,
+            cur_win,
+            tail_len,
+            season_length=int(memory.get("periodicity_lag", 1)),
+            dataset=ds,
+            timestamps=cur_ts,
+        )
+        last_known_ts = test_ts.iloc[offset + L - 1]
+        future_ts = generate_future_timestamps(pd.Timestamp(last_known_ts), tail_len, _mem_freq)
+        n = min(tail_len, len(future_ts), len(preds))
+        all_predictions.extend(preds[:n].tolist())
+        all_timestamps.extend(future_ts[:n])
+
     out_csv = os.path.join(ds_out_dir, "predictions.csv")
-    _mem_freq = memory.get("frequency")
-    if isinstance(_mem_freq, str):
-        _mem_freq_clean = _mem_freq.strip()
-        if _mem_freq_clean.lower() in {"h", "d", "w", "m", "s"}:
-            _mem_freq = _mem_freq_clean.upper()
-        else:
-            _mem_freq = _mem_freq_clean
-    timestamps = generate_future_timestamps(pd.Timestamp(last_ts), ds.predicted_window, _mem_freq)
-    save_predictions_csv(out_csv, timestamps, preds)
+    save_predictions_csv(out_csv, all_timestamps, np.asarray(all_predictions, dtype=float))
 
-    test_df = pd.read_csv(ds.test_csv)
-    test_df[TIME_COL] = pd.to_datetime(test_df[TIME_COL])
+    # Evaluate against test set ground truth
     pred_df = pd.read_csv(out_csv)
     pred_df["time_stamp"] = pd.to_datetime(pred_df["time_stamp"])
     y_true, y_pred = align_predictions(test_df, pred_df, ds.name)
 
     meta = {
         "dataset": ds.name,
-        "chosen_model": model_name,
-        "recommended_model": pre_model,
         "memory_path": memory_path,
         "case_base_path": case_base_path,
-        "frequency": _mem_freq,
+        "frequency": memory.get("frequency"),
         "periodicity_lag": memory.get("periodicity_lag"),
         "look_back": ds.look_back,
         "predicted_window": ds.predicted_window,
@@ -665,7 +703,7 @@ def deterministic_run_for_dataset(cfg: ExperimentConfig, ds) -> dict:
         "MSE": mse(y_true, y_pred),
         "MAE": mae(y_true, y_pred),
         "sMAPE": smape(y_true, y_pred),
-        "model": model_name,
+        "model": "deterministic",
     }
 
 

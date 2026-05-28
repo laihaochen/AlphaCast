@@ -1,0 +1,17 @@
+{
+  "Sundial": 6,
+  "DynamicOptimizedTheta": 3,
+  "CrostonClassic": 4,
+  "SeasonalNaive": 4,
+  "iTransformer": 7,
+  "PatchTST": 16,
+  "Prophet": 5,
+  "Autoformer": 5,
+  "Theta": 4,
+  "HoltWinters": 4,
+  "HistoricAverage": 2,
+  "TimesNet": 6,
+  "DLinear": 16,
+  "AutoARIMA": 1,
+  "AutoCES": 5
+}

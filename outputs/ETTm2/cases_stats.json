@@ -1,0 +1,16 @@
+{
+  "TimesNet": 28,
+  "iTransformer": 39,
+  "PatchTST": 42,
+  "DLinear": 18,
+  "AutoARIMA": 12,
+  "SeasonalNaive": 2,
+  "Prophet": 5,
+  "Theta": 8,
+  "HistoricAverage": 5,
+  "AutoCES": 6,
+  "HoltWinters": 2,
+  "Autoformer": 4,
+  "Sundial": 3,
+  "CrostonClassic": 1
+}

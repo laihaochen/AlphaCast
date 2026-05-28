@@ -1,0 +1,13 @@
+{
+  "DLinear": 17,
+  "Prophet": 7,
+  "iTransformer": 19,
+  "TimesNet": 13,
+  "PatchTST": 16,
+  "HistoricAverage": 4,
+  "AutoARIMA": 4,
+  "DynamicOptimizedTheta": 4,
+  "CrostonClassic": 2,
+  "Autoformer": 1,
+  "Theta": 1
+}

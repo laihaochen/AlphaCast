@@ -35,18 +35,23 @@ from statsforecast.models import (
 class _DeepLearningRuntimeContext:
     checkpoints: Dict[str, str]
     pred_len: Optional[int] = None
+    dataset_name: Optional[str] = None
 
 
 _ACTIVE_DL_CONTEXT: Optional[_DeepLearningRuntimeContext] = None
+
+# Root directory for auto-discovered checkpoints: <repo_root>/checkpoints/
+_DL_CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "checkpoints")
 
 
 def configure_deep_learning_runtime(
     checkpoints: Optional[Dict[str, str]],
     pred_len: Optional[int],
+    dataset_name: Optional[str] = None,
 ) -> None:
     """Register dataset-specific resources for deep learning models."""
     global _ACTIVE_DL_CONTEXT
-    if not checkpoints and pred_len is None:
+    if not checkpoints and pred_len is None and dataset_name is None:
         _ACTIVE_DL_CONTEXT = None
         return
 
@@ -59,6 +64,7 @@ def configure_deep_learning_runtime(
     _ACTIVE_DL_CONTEXT = _DeepLearningRuntimeContext(
         checkpoints=normalized,
         pred_len=int(pred_len) if pred_len is not None else None,
+        dataset_name=dataset_name,
     )
 
 
@@ -67,10 +73,44 @@ def _active_dl_context() -> Optional[_DeepLearningRuntimeContext]:
 
 
 def _resolve_checkpoint(alias: str) -> Optional[str]:
+    """Resolve a checkpoint path for *alias*.
+
+    Priority:
+      1. Explicit path from config YAML ``checkpoints`` dict.
+      2. Auto-discovery under ``checkpoints/<dataset_name>/`` (standard naming or fuzzy match).
+    """
     ctx = _active_dl_context()
     if ctx is None:
         return None
-    return ctx.checkpoints.get(alias.lower())
+
+    # 1. Explicit config
+    explicit = ctx.checkpoints.get(alias.lower())
+    if explicit and os.path.exists(explicit):
+        return explicit
+
+    # 2. Auto-discovery
+    ds_name = ctx.dataset_name
+    if not ds_name:
+        return explicit  # return explicit even if not found (will error later)
+
+    ds_dir = os.path.join(_DL_CHECKPOINT_DIR, ds_name)
+    if not os.path.isdir(ds_dir):
+        return explicit
+
+    # Standard naming: <Alias>_checkpoint.pth
+    standard = os.path.join(ds_dir, f"{alias}_checkpoint.pth")
+    if os.path.isfile(standard):
+        return standard
+
+    # Fuzzy match: any .pth starting with <Alias>
+    try:
+        for entry in os.listdir(ds_dir):
+            if entry.startswith(alias) and entry.endswith(".pth"):
+                return os.path.join(ds_dir, entry)
+    except OSError:
+        pass
+
+    return explicit
 
 
 def _resolve_pred_len(default: int) -> int:
@@ -160,6 +200,97 @@ class HistoricAverageModel(ForecastModel):
 
     def predict(self, h: int, **kwargs) -> np.ndarray:
         return np.full(h, getattr(self, "_mean", 0.0), dtype=float)
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers for deep-learning checkpoint loading
+# ---------------------------------------------------------------------------
+
+_DL_CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "checkpoints")
+
+
+def _discover_checkpoint(alias: str, dataset_name: str | None) -> str | None:
+    """Auto-discover a checkpoint file for *alias* under checkpoints/<dataset>/.
+
+    Priority order:
+      1. Explicit path from the active runtime context (config YAML checkpoints dict).
+      2. checkpoints/<dataset>/<Alias>_checkpoint.pth
+      3. Any .pth file under checkpoints/<dataset>/ whose name starts with <Alias>
+    """
+    # 1. Runtime context (explicit config)
+    runtime_path = _resolve_checkpoint(alias)
+    if runtime_path and os.path.exists(runtime_path):
+        return runtime_path
+
+    if not dataset_name:
+        return None
+
+    ds_dir = os.path.join(_DL_CHECKPOINT_DIR, dataset_name)
+    if not os.path.isdir(ds_dir):
+        return None
+
+    # 2. Standard naming: <Alias>_checkpoint.pth
+    standard = os.path.join(ds_dir, f"{alias}_checkpoint.pth")
+    if os.path.isfile(standard):
+        return standard
+
+    # 3. Fuzzy match: any .pth whose basename starts with <Alias>
+    try:
+        for entry in os.listdir(ds_dir):
+            if entry.startswith(alias) and entry.endswith(".pth"):
+                return os.path.join(ds_dir, entry)
+    except OSError:
+        pass
+
+    return None
+
+
+def _load_state_with_embedding_transfer(
+    model: torch.nn.Module,
+    state_dict: dict[str, torch.Tensor],
+    alias: str,
+) -> None:
+    """Load *state_dict* into *model*, transferring multivariate embeddings when shapes differ.
+
+    Many THUML checkpoints were trained with ``enc_in > 1`` (multivariate), while AlphaCast
+    inference uses ``enc_in = 1`` (univariate).  When the input embedding weight has shape
+    ``[enc_in_ckpt, d_model]`` but the model expects ``[1, d_model]``, we replace the
+    checkpoint embedding with the column-wise mean so that the core transformer layers can
+    still benefit from pre-training.
+    """
+    model_state = model.state_dict()
+
+    for key, ckpt_w in list(state_dict.items()):
+        model_w = model_state.get(key)
+        if model_w is None:
+            continue
+        if ckpt_w.shape == model_w.shape:
+            continue
+
+        # Case 1: Multivariate (enc_in > 1) → Univariate (enc_in = 1) input embedding
+        # Shape [C_in, d_model] → mean over input channels to get [1, d_model]
+        if ckpt_w.ndim >= 2 and ckpt_w.shape[0] > 1 and model_w.shape[0] == 1:
+            state_dict[key] = ckpt_w.mean(dim=0, keepdim=True).to(dtype=model_w.dtype)
+            continue
+
+        # Case 2: Temporal embedding freq mismatch (e.g. h→4 features, min→5 features)
+        # Shape [d_model, N_feat_ckpt] vs [d_model, N_feat_model]
+        if ckpt_w.ndim == 2 and model_w.ndim == 2 and ckpt_w.shape[0] == model_w.shape[0] and ckpt_w.shape[1] != model_w.shape[1]:
+            if ckpt_w.shape[1] < model_w.shape[1]:
+                pad = torch.zeros(ckpt_w.shape[0], model_w.shape[1] - ckpt_w.shape[1],
+                                  device=ckpt_w.device, dtype=ckpt_w.dtype)
+                state_dict[key] = torch.cat([ckpt_w, pad], dim=1).to(dtype=model_w.dtype)
+            else:
+                state_dict[key] = ckpt_w[:, :model_w.shape[1]].to(dtype=model_w.dtype)
+            continue
+
+        # Case 3: Other shape mismatch → remove from state_dict, keep random init
+        del state_dict[key]
+
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if missing or unexpected:
+        print(f"[{alias}] Loaded checkpoint with {len(missing)} missing keys and {len(unexpected)} unexpected keys.")
+
 
 @dataclass
 class AutoformerModel(ForecastModel):
@@ -300,9 +431,7 @@ class AutoformerModel(ForecastModel):
             state = torch.load(self.model_path, map_location=self._device)
         if isinstance(state, dict) and "state_dict" in state:
             state = state["state_dict"]
-        missing, unexpected = self._model.load_state_dict(state, strict=False)
-        if missing or unexpected:
-            print(f"[Autoformer] missing_keys={len(missing)}, unexpected_keys={len(unexpected)}")
+        _load_state_with_embedding_transfer(self._model, state, self.alias)
         self._model.eval()
         
     def predict(self, h: int, **kwargs) -> np.ndarray:
@@ -485,9 +614,7 @@ class DLinearModel(ForecastModel):
             state = torch.load(self.model_path, map_location=self._device)
         if isinstance(state, dict) and "state_dict" in state:
             state = state["state_dict"]
-        missing, unexpected = self._model.load_state_dict(state, strict=False)
-        if missing or unexpected:
-            print(f"[DLinear] missing_keys={len(missing)}, unexpected_keys={len(unexpected)}")
+        _load_state_with_embedding_transfer(self._model, state, self.alias)
         self._model.eval()
 
     def predict(self, h: int, **kwargs) -> np.ndarray:
@@ -659,7 +786,7 @@ class PatchTSTModel(ForecastModel):
             state = torch.load(self.model_path, map_location='cpu')
         if isinstance(state, dict) and 'state_dict' in state:
             state = state['state_dict']
-        self._model.load_state_dict(state, strict=False)
+        _load_state_with_embedding_transfer(self._model, state, self.alias)
         self._model.eval()
 
     def predict(self, h: int,**kwargs) -> np.ndarray:
@@ -828,9 +955,7 @@ class TimesNetModel(ForecastModel):
             state = torch.load(self.model_path, map_location=self._device)
         if isinstance(state, dict) and "state_dict" in state:
             state = state["state_dict"]
-        missing, unexpected = self._model.load_state_dict(state, strict=False)
-        if missing or unexpected:
-            print(f"[TimesNet] missing_keys={len(missing)}, unexpected_keys={len(unexpected)}")
+        _load_state_with_embedding_transfer(self._model, state, self.alias)
         self._model.eval()
 
     def predict(self, h: int, **kwargs) -> np.ndarray:
@@ -1003,9 +1128,7 @@ class iTransformerModel(ForecastModel):
             state = torch.load(self.model_path, map_location=self._device)
         if isinstance(state, dict) and "state_dict" in state:
             state = state["state_dict"]
-        missing, unexpected = self._model.load_state_dict(state, strict=False)
-        if missing or unexpected:
-            print(f"[iTransformer] missing_keys={len(missing)}, unexpected_keys={len(unexpected)}")
+        _load_state_with_embedding_transfer(self._model, state, self.alias)
         self._model.eval()
 
     def predict(self, h: int, **kwargs) -> np.ndarray:
@@ -1732,6 +1855,7 @@ class SundialModel:
     _y: Optional[np.ndarray] = None
     _model: Optional[any] = None
     _tokenizer: Optional[any] = None
+    _load_failed: bool = False
 
     def fit(self, y: np.ndarray, season_length: Optional[int] = None,**kwargs) -> None:
         """
@@ -1744,18 +1868,27 @@ class SundialModel:
         Ensures the model is loaded. If the model is not loaded, it loads it.
         """
         import os
+        if self._load_failed:
+            raise RuntimeError("Sundial model failed to load previously; skipping.")
         try:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-            # Define model path or Hugging Face repository
-            model_id = self.local_dir if self.local_dir and os.path.isdir(self.local_dir) else self.hf_repo_id
-            print(f"Loading model from {model_id}")
+            # Use local_dir only if it contains actual model files (not empty)
+            local_valid = (
+                self.local_dir
+                and os.path.isdir(self.local_dir)
+                and any(f.endswith((".bin", ".safetensors", ".pth", ".json", ".model"))
+                        for f in os.listdir(self.local_dir))
+            )
+            model_id = self.local_dir if local_valid else self.hf_repo_id
+            print(f"Loading Sundial from {model_id}")
             
             # Load model and tokenizer
             self._model = AutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True).to(device).eval()
             # self._tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
         except Exception as e:
+            self._load_failed = True
             raise ImportError("transformers is required for Sundial.") from e
 
         return self._model
@@ -1764,39 +1897,21 @@ class SundialModel:
         Predict the next `h` values based on the fitted data.
         """
         assert self._y is not None and len(self._y) > 0, "Model not fitted with data yet."
-        
+
         import torch
         model = self._model or self._ensure_model()
 
-        # Prepare input: reshape to (1, context_length) for model input
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        x_enc = torch.tensor(self._y.reshape(1, -1), dtype=torch.float32).to(device)  # Ensure it is on the correct device
+        x_enc = torch.tensor(self._y.reshape(1, -1), dtype=torch.float32).to(device)
 
-        # Ensure that the input data is properly formatted
-        # print(f'h: {h}')
-        # print(f"Input shape for prediction: {x_enc.shape}")
-# Input shape for prediction: torch.Size([1, 96])
-        # try:
-        # Generate predictions using model's generate method
-        output = model.generate(
-            x_enc,
-            max_new_tokens=h,      # Number of tokens to predict
-            num_samples=1,         # Number of samples
-            temperature=1.0        # Randomness factor
-        )
+        # Use forward() directly instead of generate() — the latter has
+        # compatibility issues with transformers>=4.57 (DynamicCache API
+        # changes: seen_tokens, get_usable_length, get_max_length removed).
+        with torch.no_grad():
+            out = model(x_enc, max_output_length=h, num_samples=1)
 
-        # Print the output shape for debugging
-        # print(f"Output shape: {output.shape}")
-        
-        # Take the last 96 values along the final dimension
-        if output.dim() == 3:
-            pred_tokens = output[0, 0, :]   # (96,)
-        elif output.dim() == 2:
-            pred_tokens = output[0, -h:]    # (h,)
-        else:
-            raise ValueError(f"Unexpected output shape: {output.shape}")
-
-        return pred_tokens.detach().cpu().numpy()
+        # out.logits holds the predictions: shape [bsz, num_samples, pred_len]
+        return out.logits[0, 0, :h].detach().cpu().numpy()
     
 def get_default_models() -> List[ForecastModel]:
     # Maintain three basic models: SeasonalNaive, HistoricAverage, and AutoARIMA

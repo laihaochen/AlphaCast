@@ -1,0 +1,9 @@
+{
+  "max": 186.24,
+  "min": -2.1,
+  "mean": 28.128921342329544,
+  "variance": 1566.6843383325322,
+  "periodicity_lag": 1,
+  "series_length": 16896,
+  "frequency": "15min"
+}

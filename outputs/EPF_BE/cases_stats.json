@@ -1,0 +1,11 @@
+{
+  "iTransformer": 5,
+  "PatchTST": 65,
+  "Prophet": 9,
+  "DLinear": 9,
+  "Theta": 4,
+  "TimesNet": 9,
+  "HoltWinters": 2,
+  "CrostonClassic": 1,
+  "DynamicOptimizedTheta": 1
+}
