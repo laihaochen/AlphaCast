@@ -1,9 +1,0 @@
-{
-  "dataset": "ETTm1",
-  "memory_path": "outputs/ETTm1/memory.json",
-  "case_base_path": "outputs/ETTm1/case_base.json",
-  "frequency": "15min",
-  "periodicity_lag": 1,
-  "look_back": 96,
-  "predicted_window": 96
-}

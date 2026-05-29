@@ -1,9 +1,0 @@
-{
-  "dataset": "MOPEX",
-  "memory_path": "outputs/MOPEX/memory.json",
-  "case_base_path": "outputs/MOPEX/case_base.json",
-  "frequency": "D",
-  "periodicity_lag": 1,
-  "look_back": 96,
-  "predicted_window": 96
-}

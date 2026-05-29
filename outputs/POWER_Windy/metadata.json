@@ -1,9 +1,0 @@
-{
-  "dataset": "POWER_Windy",
-  "memory_path": "outputs/POWER_Windy/memory.json",
-  "case_base_path": "outputs/POWER_Windy/case_base.json",
-  "frequency": "15min",
-  "periodicity_lag": 1,
-  "look_back": 96,
-  "predicted_window": 96
-}

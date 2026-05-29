@@ -13,3 +13,11 @@
       MOPEX     6.561329   1.750493 1.046095 deterministic
 POWER_Windy  7815.381343  41.093530 1.062175 deterministic
 POWER_Sunny    37.157025   3.659754 1.528047 deterministic
+
+=== Experiment Summary ===
+dataset       MSE      MAE   sMAPE model
+ EPF_DE 317.46838 11.86146 0.39587   LLM
+
+=== Experiment Summary ===
+dataset       MSE      MAE    sMAPE model
+ EPF_NP 51.656105 4.747732 0.111782   LLM

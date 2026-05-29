@@ -58,6 +58,10 @@ Thumbs.db
 # Project-specific: cloned THUML library
 .thuml/
 
+# Experiment outputs (large, regeneratable)
+outputs/
+baseline_outputs/
+
 # Project-specific: DeepLearningCheckpoints、foundation_models
 castagent/DeepLearningCheckpoints/
 castagent/foundation_models/

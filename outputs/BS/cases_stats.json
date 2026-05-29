@@ -1,9 +1,0 @@
-{
-  "TimesNet": 15,
-  "PatchTST": 78,
-  "iTransformer": 4,
-  "Autoformer": 1,
-  "Prophet": 2,
-  "DLinear": 4,
-  "AutoARIMA": 1
-}

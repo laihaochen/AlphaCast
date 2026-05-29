@@ -1,9 +1,0 @@
-{
-  "dataset": "BS",
-  "memory_path": "outputs/BS/memory.json",
-  "case_base_path": "outputs/BS/case_base.json",
-  "frequency": null,
-  "periodicity_lag": 1,
-  "look_back": 96,
-  "predicted_window": 96
-}
