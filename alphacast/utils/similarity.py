@@ -243,10 +243,10 @@ def top1_most_similar_neighbor(query: np.ndarray, candidates: List[Tuple[np.ndar
 
 def top1_most_similar_cluster(query: np.ndarray, candidates: List[ClusterEntry]) -> ClusterEntry:
     best_cluster = None
-    best_sim = -1.0
+    best_dist = float("inf")
     for cluster in candidates:
-        sim = euclidean_distance(query, np.asarray(cluster.window, dtype=float))
-        if sim > best_sim:
-            best_sim = sim
+        dist = euclidean_distance(query, np.asarray(cluster.window, dtype=float))
+        if dist < best_dist:
+            best_dist = dist
             best_cluster = cluster
     return best_cluster or candidates[0]
