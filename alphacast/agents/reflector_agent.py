@@ -35,7 +35,7 @@ _WINDOW_CLAIM_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _BASELINE_CLAIM_PATTERN = re.compile(
-    r"\b(?:baseline)\b[^\d\-]{0,16}(-?\d+(?:\.\d+)?)"
+    r"\b(?:baseline)\s+(?:mean|avg|average|value|level|last|final)\b[^\d\-]{0,12}(-?\d+(?:\.\d+)?)"
     r"|"
     r"\breference\s+(?:(?:mean|avg|value|level|last|final)\b)[^\d\-]{0,12}(-?\d+(?:\.\d+)?)",
     re.IGNORECASE,

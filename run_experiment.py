@@ -256,8 +256,8 @@ def run_experiment(config_path: str, dataset_selectors: Optional[List[str]] = No
                 training_literal = json.dumps(ds.training_csv)
                 output_literal = json.dumps(cfg.output_dir)
                 dataset_literal = json.dumps(ds.name)
-                max_net_failures = 3
-                max_other_failures = 3
+                max_net_failures = 5
+                max_other_failures = 5
 
                 def _is_network_error(ex: Exception) -> bool:
                     txt = str(ex).lower()

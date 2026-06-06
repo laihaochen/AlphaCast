@@ -4,20 +4,6 @@ use_exogenous: True
 
 datasets:
   # =========================================================================
-  # Bike Sharing (BS) — hourly bike rental demand
-  # =========================================================================
-  - name: BS
-    aliases: [bs, bike_sharing]
-    training_csv: dataset/BS/BS_train.csv
-    test_csv: dataset/BS/BS_test.csv
-    look_back: 96
-    predicted_window: 96
-    sliding_window: 96
-    frequency: H
-    checkpoints: {}
-    context_prompt_file: prompts/contextual_briefings/BS.txt
-
-  # =========================================================================
   # EPF — Electricity Price Forecasting (5 European markets, hourly)
   # =========================================================================
   - name: EPF_BE
@@ -90,17 +76,6 @@ datasets:
     checkpoints: {}
     context_prompt_file: prompts/contextual_briefings/ETTh1.txt
 
-  - name: ETTh2
-    aliases: [etth2]
-    training_csv: dataset/ETT/ETTh2/ETT_ETTh2_train.csv
-    test_csv: dataset/ETT/ETTh2/ETT_ETTh2_test.csv
-    look_back: 96
-    predicted_window: 96
-    sliding_window: 96
-    frequency: H
-    checkpoints: {}
-    context_prompt_file:
-
   - name: ETTm1
     aliases: [ettm1]
     training_csv: dataset/ETT/ETTm1/ETT_ETTm1_train.csv
@@ -111,17 +86,6 @@ datasets:
     frequency: 15min
     checkpoints: {}
     context_prompt_file: prompts/contextual_briefings/ETTm1.txt
-
-  - name: ETTm2
-    aliases: [ettm2]
-    training_csv: dataset/ETT/ETTm2/ETT_ETTm2_train.csv
-    test_csv: dataset/ETT/ETTm2/ETT_ETTm2_test.csv
-    look_back: 96
-    predicted_window: 96
-    sliding_window: 96
-    frequency: 15min
-    checkpoints: {}
-    context_prompt_file:
 
   # =========================================================================
   # MOPEX — daily streamflow discharge (hydrology)

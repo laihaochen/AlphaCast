@@ -1,23 +1,56 @@
 === Experiment Summary ===
-    dataset          MSE        MAE    sMAPE         model
-         BS 61949.372008 200.211241 0.918873 deterministic
-     EPF_BE   905.927851  14.931536 0.251941 deterministic
-     EPF_DE   346.753649  12.757223 0.433920 deterministic
-     EPF_FR  1020.595027  13.921280 0.232094 deterministic
-     EPF_NP    66.871546   5.790115 0.135074 deterministic
-    EPF_PJM    87.876456   6.742492 0.216927 deterministic
-      ETTh1     8.473138   2.171910 0.262099 deterministic
-      ETTh2    53.984160   5.605359 0.198084 deterministic
-      ETTm1     4.453631   1.390695 0.159758 deterministic
-      ETTm2    17.574943   2.758903 0.078138 deterministic
-      MOPEX     6.561329   1.750493 1.046095 deterministic
-POWER_Windy  7815.381343  41.093530 1.062175 deterministic
-POWER_Sunny    37.157025   3.659754 1.528047 deterministic
+    dataset         MSE       MAE    sMAPE         model
+     EPF_BE  905.927851 14.931536 0.251941 deterministic
+     EPF_DE  346.753649 12.757223 0.433920 deterministic
+     EPF_FR 1020.595027 13.921280 0.232094 deterministic
+     EPF_NP   66.871546  5.790115 0.135074 deterministic
+    EPF_PJM   87.876456  6.742492 0.216927 deterministic
+      ETTh1    8.622180  2.199673 0.268804 deterministic
+      ETTm1    4.453943  1.387799 0.159543 deterministic
+      MOPEX    7.261170  1.864525 1.076592 deterministic
+POWER_Windy 7839.218838 41.278414 1.012134 deterministic
+POWER_Sunny   37.157025  3.659754 1.528047 deterministic
+
+deepseek v4 flash
 
 === Experiment Summary ===
 dataset       MSE      MAE   sMAPE model
  EPF_DE 317.46838 11.86146 0.39587   LLM
+ EPF_NP 51.656105 4.747732 0.111782   LLM
+EPF_PJM 61.973756 5.71487 0.19201   LLM
+  MOPEX 6.459032 1.694606 0.854167   LLM
+
+qwen 3.6 reasoner
 
 === Experiment Summary ===
-dataset       MSE      MAE    sMAPE model
- EPF_NP 51.656105 4.747732 0.111782   LLM
+dataset         MSE       MAE    sMAPE model
+ EPF_BE  863.105481 13.788250 0.222017   LLM
+ EPF_DE  319.044471 11.915883 0.397076   LLM
+ EPF_FR 1070.456441 12.325195 0.192955   LLM
+ EPF_NP   53.229903  4.855545 0.114650   LLM
+ EPF_PJM  61.9738    5.7149   0.1920     LLM
+  ETTh1    8.568001  2.184261 0.274084   LLM
+  ETTm1    6.4387    1.7314   0.3576     LLM
+  MOPEX    5.566591  1.413611 1.011381   LLM
+POWER_Windy 2958.0275  34.5770 1.0501    LLM
+
+bug: euclidean distance
+
+-----------------
+
+qwen 3.6 reasoner
+
+all dataset cluster number = 6
+
+Dataset           Exp    Now      MAE_b      MAE_o      Δ_MAE      MSE_b      MSE_o  sMAPE_b  sMAPE_o     Winner     Progress
+----------------------------------------------------------------------------------------------------------------------------------
+EPF_BE           2928   3024    14.9315    14.9701 +   0.0386   905.9279   912.4617   25.19%   24.27%   Baseline       ✅ done
+EPF_DE           2928   2928    12.7572    11.9253   -0.8319   346.7536   313.1787   43.39%   40.45%      LLM ✅       ✅ done
+EPF_FR           2928   2928    13.9213    12.6151   -1.3062  1020.5950   983.3428   23.21%   20.18%      LLM ✅       ✅ done
+EPF_NP           2928   2928     5.7901     4.7621   -1.0280    66.8715    51.1625   13.51%   11.26%      LLM ✅       ✅ done
+EPF_PJM          2928   2928     6.7425     6.0522   -0.6903    87.8765    67.3075   21.69%   20.07%      LLM ✅       ✅ done
+ETTh1            2448   2448     2.1997     2.0510   -0.1487     8.6222     7.5476   26.88%   24.72%      LLM ✅       ✅ done
+ETTm1            4800   4800     1.3878     1.5198 +   0.1320     4.4539     5.1424   15.95%   17.12%   Baseline       ✅ done
+MOPEX            2448   2544     1.8645     1.6156   -0.2489     7.2612     6.7845  107.66%  104.14%      LLM ✅       ✅ done
+POWER_Windy      4800   4800    41.2784    36.1510   -5.1275  7839.2188  4104.7632  101.21%  115.21%      LLM ✅       ✅ done
+POWER_Sunny      4800   4800     3.6598     2.9916   -0.6681    37.1570    20.8068  152.80%  126.25%      LLM ✅       ✅ done
