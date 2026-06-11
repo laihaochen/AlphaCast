@@ -131,9 +131,9 @@ ALL_DATASETS=(
   EPF_PJM
   ETTh1
   ETTm1
+  WP
+  SP
   MOPEX
-  POWER_Windy
-  POWER_Sunny
 )
 
 # Build per-GPU dataset groups
@@ -143,38 +143,15 @@ for ((i=0; i<NUM_GPUS; i++)); do
 done
 
 if [ ${#CUSTOM_DATASETS[@]} -gt 0 ]; then
-  # User specified P1 datasets; distribute the rest evenly across remaining GPUs
-  GPU_DATASETS[0]="${CUSTOM_DATASETS[*]}"
-
-  # Collect remaining datasets
-  REMAINING=()
-  for ds in "${ALL_DATASETS[@]}"; do
-    in_custom=false
-    for cd in "${CUSTOM_DATASETS[@]}"; do
-      if [ "$ds" = "$cd" ]; then
-        in_custom=true
-        break
-      fi
-    done
-    if ! $in_custom; then
-      REMAINING+=("$ds")
+  # User specified datasets — ONLY run those, split round-robin across all GPUs
+  for ((i=0; i<${#CUSTOM_DATASETS[@]}; i++)); do
+    gpu_idx=$((i % NUM_GPUS))
+    if [ -n "${GPU_DATASETS[$gpu_idx]}" ]; then
+      GPU_DATASETS[$gpu_idx]="${GPU_DATASETS[$gpu_idx]} ${CUSTOM_DATASETS[$i]}"
+    else
+      GPU_DATASETS[$gpu_idx]="${CUSTOM_DATASETS[$i]}"
     fi
   done
-
-  # Distribute remaining datasets round-robin across GPUs 2..N
-  if [ $NUM_GPUS -gt 1 ]; then
-    for ((i=0; i<${#REMAINING[@]}; i++)); do
-      gpu_idx=$((1 + i % (NUM_GPUS - 1)))
-      if [ -n "${GPU_DATASETS[$gpu_idx]}" ]; then
-        GPU_DATASETS[$gpu_idx]="${GPU_DATASETS[$gpu_idx]} ${REMAINING[$i]}"
-      else
-        GPU_DATASETS[$gpu_idx]="${REMAINING[$i]}"
-      fi
-    done
-  else
-    # Only 1 GPU, append remaining to P1
-    GPU_DATASETS[0]="${GPU_DATASETS[0]} ${REMAINING[*]}"
-  fi
 else
   # Default: distribute round-robin across all GPUs
   for ((i=0; i<${#ALL_DATASETS[@]}; i++)); do

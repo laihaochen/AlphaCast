@@ -22,6 +22,7 @@ from alphacast.agents.runtime import (
 )
 from alphacast.eval import align_predictions, mae, mse, smape
 from alphacast.tools.analysis import analyze_training
+from alphacast.tools.forecast import prophet_decompose_series
 from alphacast.features import extract_target_features, extract_exogenous_features
 
 
@@ -114,7 +115,7 @@ def run_experiment(config_path: str, dataset_selectors: Optional[List[str]] = No
                 ds.name,
                 ds.sliding_window,
                 method="weighted",
-                num_clusters=6,
+                num_clusters=ds.num_clusters,
                 dataset_cfg=ds,
             )
         except Exception as exc:
@@ -223,6 +224,27 @@ def run_experiment(config_path: str, dataset_selectors: Optional[List[str]] = No
             except Exception as exc:
                 exo_features, exo_corr, exo_top3, exo_columns = {}, {}, [], {}
                 print(f"[warn] Exogenous variable processing failed for dataset '{ds.name}': {exc}")
+
+        # === Prophet decomposition (新增) ===
+        prophet_decomposition_enabled = False
+        if use_agent:
+            try:
+                test_df_for_prophet = pd.read_csv(ds.test_csv)
+                test_df_for_prophet[TIME_COL] = pd.to_datetime(test_df_for_prophet[TIME_COL])
+                test_df_for_prophet = test_df_for_prophet.sort_values(TIME_COL).reset_index(drop=True)
+                prophet_result = prophet_decompose_series(
+                    train_df,
+                    target_col,
+                    ds.name,
+                    cfg.output_dir,
+                    season_length=int(analysis.memory.get("periodicity_lag", 1)) if isinstance(analysis.memory, dict) else 1,
+                    frequency=frequency or "H",
+                    test_df=test_df_for_prophet,
+                )
+                if prophet_result is not None:
+                    prophet_decomposition_enabled = True
+            except Exception as exc:
+                print(f"[warn] Prophet decomposition failed for dataset '{ds.name}': {exc}. Continuing in raw mode.")
 
         try:
             test_df = pd.read_csv(ds.test_csv)
@@ -354,6 +376,21 @@ def run_experiment(config_path: str, dataset_selectors: Optional[List[str]] = No
                             f"""
                             You are forecasting the dataset {ds.name} (step {step_index}).
 
+                            The time series has been pre-decomposed using a two-component Prophet approach:
+                              - trend_global(t): long-term direction from Prophet fitted on ALL training data (piecewise linear with changepoints)
+                              - seasonality(t): periodic patterns (daily/weekly/yearly Fourier series), also from the global Prophet fit
+                              - trend_local(t): per-window correction fitted on the detrended lookback (96 points), capturing recent deviations from the global trend
+                              - Combined trend used for assembly: trend(t) = trend_global(t) + trend_local(t)
+                              - residual(t) = y(t) - trend(t) - seasonality(t): what YOU predict
+
+                            You are predicting only the RESIDUAL component. The system will automatically
+                            add back the combined trend and seasonality:
+                              final(t) = trend_global(t) + trend_local(t) + seasonality(t) + your_residual(t)
+
+                            The packet provides `prophet_trend_global` (long-term) and `prophet_trend_local`
+                            (per-window correction) for context, plus `prophet_trend_forecast` which is the
+                            combined trend already summed. Do NOT add these to your predictions.
+
                             Step configuration:
                               - window_offset: {window_offset}
                               - look_back length: {look_back}
@@ -362,11 +399,11 @@ def run_experiment(config_path: str, dataset_selectors: Optional[List[str]] = No
 
                             Required actions:
                               1. Call tool.consult exactly once with dataset_name={dataset_literal}, window_offset={window_offset}, forecast_horizon={step_horizon} to fetch the InvestigatorAgent packet.
-                              2. Analyse the packet: anchor on `reference_prediction`, compare it to neighbor hints and exogenous trends, and decide whether a careful adjustment is justified. Capture the main signals in a short internal plan.
-                              3. Before emitting predictions, write a brief "Reflection" confirming the prediction list will have length {step_horizon}, that every argument you will pass to tool.emit_predictions (dataset_name, output_dir, predicted_window, window_offset, start_timestamp, selected_features, feature_weights, exogenous selections) is correct, and that the forecast stays consistent with the baseline guidance and exogenous outlook.
+                              2. Analyse the packet: anchor on `reference_prediction` (which is the baseline model's RESIDUAL), compare it to neighbor hints and exogenous trends, and decide whether a careful adjustment is justified. The `look_back_window` and `neighbor_*` fields are also in residual space. `prophet_trend_forecast` and `prophet_seasonality_forecast` are provided for context only — do NOT add them to your predictions.
+                              3. Before emitting predictions, write a brief "Reflection" confirming the prediction list will have length {step_horizon}, that every argument you will pass to tool.emit_predictions (dataset_name, output_dir, predicted_window, window_offset, start_timestamp, selected_features, feature_weights, exogenous selections) is correct, and that the forecast contains RESIDUAL values (not raw time series values!).
                               4. Log the reasoning by calling tool.record_chain_of_thought exactly once with dataset_name={dataset_literal}, window_offset={window_offset}, and a concise reasoning summary referencing the evidence and any adjustments (or the decision to keep the baseline).
                               5. Call tool.emit_predictions exactly once with:
-                                   - predictions: a list of {step_horizon} floats,
+                                   - predictions: a list of {step_horizon} RESIDUAL floats (NOT raw time series values!),
                                    - training_csv: {training_literal},
                                    - predicted_window: {step_horizon},
                                    - output_dir: {output_literal},
@@ -381,6 +418,7 @@ def run_experiment(config_path: str, dataset_selectors: Optional[List[str]] = No
                             Rules:
                               - Only use consult, record_chain_of_thought, and emit_predictions.
                               - Treat this step independently; rely only on the context you just loaded.
+                              - Your predictions MUST be residuals. Do NOT add trend or seasonality. The system assembles the final forecast automatically.
                             """
                         ).strip()
                     )

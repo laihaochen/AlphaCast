@@ -61,6 +61,8 @@ Thumbs.db
 # Experiment outputs (large, regeneratable)
 outputs/
 baseline_outputs/
+outputs_old_version/
+checkpoints_168_24/
 
 # Project-specific: DeepLearningCheckpoints、foundation_models
 castagent/DeepLearningCheckpoints/

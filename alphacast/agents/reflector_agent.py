@@ -35,7 +35,7 @@ _WINDOW_CLAIM_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _BASELINE_CLAIM_PATTERN = re.compile(
-    r"\b(?:baseline)\s+(?:mean|avg|average|value|level|last|final)\b[^\d\-]{0,12}(-?\d+(?:\.\d+)?)"
+    r"\b(?:baseline|residual)\s+(?:mean|avg|average|value|level|last|final)\b[^\d\-]{0,12}(-?\d+(?:\.\d+)?)"
     r"|"
     r"\breference\s+(?:(?:mean|avg|value|level|last|final)\b)[^\d\-]{0,12}(-?\d+(?:\.\d+)?)",
     re.IGNORECASE,
@@ -326,13 +326,63 @@ def scan_chain_of_thought(
 
     analysis["baseline_claim_mismatches"] = baseline_mismatches
 
+    # ---- Check 4: CoT must mention "neighbor" ----
+    neighbor_mentioned = "neighbor" in text.lower()
+    analysis["neighbor_mentioned"] = neighbor_mentioned
+
+    # ---- Check 5: CoT direction vs actual emit direction ----
+    emit_direction_mismatch = None
+    if len(predictions) > 1:
+        emit_slope = (predictions[-1] - predictions[0]) / max(len(predictions) - 1, 1)
+        # Extract stated direction from CoT
+        text_lower = text.lower()
+        stated_up = any(w in text_lower for w in ["recovery", "increase", "rise", "rising", "upward", "uptrend",
+                                                    "recovering", "rebound", "improve", "improving"])
+        stated_down = any(w in text_lower for w in ["deteriorat", "decline", "decrease", "fall", "falling",
+                                                      "downward", "downtrend", "drop", "dropping", "weaken",
+                                                      "worsen", "negative shock", "collapse"])
+        if stated_up and not stated_down:
+            stated_dir = "up"
+        elif stated_down and not stated_up:
+            stated_dir = "down"
+        else:
+            stated_dir = "mixed"
+        # Only flag true sign contradictions — CoT says recovery (up) but emit
+        # slopes strongly negative, or CoT says deterioration but emit slopes
+        # strongly positive. Near-flat emissions with a tiny wrong-sign slope
+        # are not meaningful contradictions.
+        if stated_dir == "up" and emit_slope < -0.05:
+            emit_direction_mismatch = {
+                "stated_direction": "up",
+                "emit_direction": "down",
+                "emit_slope": round(float(emit_slope), 6),
+                "emit_first": round(float(predictions[0]), 4),
+                "emit_last": round(float(predictions[-1]), 4),
+            }
+        elif stated_dir == "down" and emit_slope > 0.05:
+            emit_direction_mismatch = {
+                "stated_direction": "down",
+                "emit_direction": "up",
+                "emit_slope": round(float(emit_slope), 6),
+                "emit_first": round(float(predictions[0]), 4),
+                "emit_last": round(float(predictions[-1]), 4),
+            }
+    analysis["emit_direction_mismatch"] = emit_direction_mismatch
+
     summary_parts: List[str] = []
+    if not neighbor_mentioned:
+        summary_parts.append("CoT does not mention neighbor prediction")
     if unsupported:
         summary_parts.append(f"{len(unsupported)} unsupported numeric claim(s)")
     if window_mismatches:
         summary_parts.append(f"{len(window_mismatches)} horizon mismatch(es)")
     if baseline_mismatches:
         summary_parts.append(f"{len(baseline_mismatches)} baseline contradiction(s)")
+    if emit_direction_mismatch:
+        summary_parts.append(
+            f"Emit direction ({emit_direction_mismatch['emit_direction']}) "
+            f"contradicts CoT stated direction ({emit_direction_mismatch['stated_direction']})"
+        )
 
     if summary_parts:
         analysis["flagged"] = True
@@ -402,6 +452,18 @@ def create_reflector_agent(
         diagnostics["chain_of_thought"] = analysis
 
         detected_issues: List[str] = []
+        if not analysis.get("neighbor_mentioned", True):
+            detected_issues.append(
+                "Chain-of-thought does not mention neighbor_pred — "
+                "must state neighbor direction and whether it agrees with reference"
+            )
+        if analysis.get("emit_direction_mismatch"):
+            edm = analysis["emit_direction_mismatch"]
+            detected_issues.append(
+                f"Emit direction ({edm['emit_direction']}, slope={edm['emit_slope']}) "
+                f"contradicts CoT stated direction ({edm['stated_direction']}) — "
+                f"emit goes {edm['emit_direction']} but CoT says {edm['stated_direction']}"
+            )
         if analysis["unsupported_numbers"]:
             samples = ", ".join(
                 item["raw"] for item in analysis["unsupported_numbers"][:3]

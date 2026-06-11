@@ -10,55 +10,95 @@ datasets:
     aliases: [epf_be, be]
     training_csv: dataset/EPF/BE/EPF_BE_train.csv
     test_csv: dataset/EPF/BE/EPF_BE_test.csv
-    look_back: 96
-    predicted_window: 96
-    sliding_window: 96
+    look_back: 168
+    predicted_window: 24
+    sliding_window: 24
     frequency: H
-    checkpoints: {}
+    checkpoints:
+      Autoformer: checkpoints_168_24/EPF_BE/Autoformer_checkpoint.pth
+      DLinear: checkpoints_168_24/EPF_BE/DLinear_checkpoint.pth
+      iTransformer: checkpoints_168_24/EPF_BE/iTransformer_checkpoint.pth
+      PatchTST: checkpoints_168_24/EPF_BE/PatchTST_checkpoint.pth
+      TimesNet: checkpoints_168_24/EPF_BE/TimesNet_checkpoint.pth
+    num_clusters: 8
+    cp_threshold: 0.0
+    continuity_scale: 1.5
     context_prompt_file: prompts/contextual_briefings/EPF_BE.txt
 
   - name: EPF_DE
     aliases: [epf_de, de]
     training_csv: dataset/EPF/DE/EPF_DE_train.csv
     test_csv: dataset/EPF/DE/EPF_DE_test.csv
-    look_back: 96
-    predicted_window: 96
-    sliding_window: 96
+    look_back: 168
+    predicted_window: 24
+    sliding_window: 24
     frequency: H
-    checkpoints: {}
+    checkpoints:
+      Autoformer: checkpoints_168_24/EPF_DE/Autoformer_checkpoint.pth
+      DLinear: checkpoints_168_24/EPF_DE/DLinear_checkpoint.pth
+      iTransformer: checkpoints_168_24/EPF_DE/iTransformer_checkpoint.pth
+      PatchTST: checkpoints_168_24/EPF_DE/PatchTST_checkpoint.pth
+      TimesNet: checkpoints_168_24/EPF_DE/TimesNet_checkpoint.pth
+    num_clusters: 8
+    cp_threshold: 0.0
+    continuity_scale: 2.0
     context_prompt_file: prompts/contextual_briefings/EPF_DE.txt
 
   - name: EPF_FR
     aliases: [epf_fr, fr]
     training_csv: dataset/EPF/FR/EPF_FR_train.csv
     test_csv: dataset/EPF/FR/EPF_FR_test.csv
-    look_back: 96
-    predicted_window: 96
-    sliding_window: 96
+    look_back: 168
+    predicted_window: 24
+    sliding_window: 24
     frequency: H
-    checkpoints: {}
+    checkpoints:
+      Autoformer: checkpoints_168_24/EPF_FR/Autoformer_checkpoint.pth
+      DLinear: checkpoints_168_24/EPF_FR/DLinear_checkpoint.pth
+      iTransformer: checkpoints_168_24/EPF_FR/iTransformer_checkpoint.pth
+      PatchTST: checkpoints_168_24/EPF_FR/PatchTST_checkpoint.pth
+      TimesNet: checkpoints_168_24/EPF_FR/TimesNet_checkpoint.pth
+    num_clusters: 8
+    cp_threshold: 0.0
+    continuity_scale: 1.2
     context_prompt_file: prompts/contextual_briefings/EPF_FR.txt
 
   - name: EPF_NP
     aliases: [epf_np, np]
     training_csv: dataset/EPF/NP/EPF_NP_train.csv
     test_csv: dataset/EPF/NP/EPF_NP_test.csv
-    look_back: 96
-    predicted_window: 96
-    sliding_window: 96
+    look_back: 168
+    predicted_window: 24
+    sliding_window: 24
     frequency: H
-    checkpoints: {}
+    checkpoints:
+      Autoformer: checkpoints_168_24/EPF_NP/Autoformer_checkpoint.pth
+      DLinear: checkpoints_168_24/EPF_NP/DLinear_checkpoint.pth
+      iTransformer: checkpoints_168_24/EPF_NP/iTransformer_checkpoint.pth
+      PatchTST: checkpoints_168_24/EPF_NP/PatchTST_checkpoint.pth
+      TimesNet: checkpoints_168_24/EPF_NP/TimesNet_checkpoint.pth
+    num_clusters: 8
+    cp_threshold: 0.0
+    continuity_scale: 0.5
     context_prompt_file: prompts/contextual_briefings/EPF_NP.txt
 
   - name: EPF_PJM
     aliases: [epf_pjm, pjm]
     training_csv: dataset/EPF/PJM/EPF_PJM_train.csv
     test_csv: dataset/EPF/PJM/EPF_PJM_test.csv
-    look_back: 96
-    predicted_window: 96
-    sliding_window: 96
+    look_back: 168
+    predicted_window: 24
+    sliding_window: 24
     frequency: H
-    checkpoints: {}
+    checkpoints:
+      Autoformer: checkpoints_168_24/EPF_PJM/Autoformer_checkpoint.pth
+      DLinear: checkpoints_168_24/EPF_PJM/DLinear_checkpoint.pth
+      iTransformer: checkpoints_168_24/EPF_PJM/iTransformer_checkpoint.pth
+      PatchTST: checkpoints_168_24/EPF_PJM/PatchTST_checkpoint.pth
+      TimesNet: checkpoints_168_24/EPF_PJM/TimesNet_checkpoint.pth
+    num_clusters: 8
+    cp_threshold: 0.0
+    continuity_scale: 1.0
     context_prompt_file: prompts/contextual_briefings/EPF_PJM.txt
 
   # =========================================================================
@@ -74,6 +114,9 @@ datasets:
     sliding_window: 96
     frequency: H
     checkpoints: {}
+    num_clusters: 8
+    cp_threshold: 0.0
+    continuity_scale: 2.0
     context_prompt_file: prompts/contextual_briefings/ETTh1.txt
 
   - name: ETTm1
@@ -85,7 +128,52 @@ datasets:
     sliding_window: 96
     frequency: 15min
     checkpoints: {}
+    num_clusters: 8
+    cp_threshold: 0.0
+    continuity_scale: 2.0
     context_prompt_file: prompts/contextual_briefings/ETTm1.txt
+
+  # =========================================================================
+  # POWER — wind & solar power generation (15-minute)
+  # =========================================================================
+  - name: WP
+    aliases: [power_windy, windy_power, windy]
+    training_csv: dataset/POWER_NEW/windy_power/windy_power_train.csv
+    test_csv: dataset/POWER_NEW/windy_power/windy_power_test.csv
+    look_back: 96
+    predicted_window: 96
+    sliding_window: 96
+    frequency: 15min
+    checkpoints:
+      Autoformer: checkpoints/POWER_Windy/Autoformer_checkpoint.pth
+      DLinear: checkpoints/POWER_Windy/DLinear_checkpoint.pth
+      iTransformer: checkpoints/POWER_Windy/iTransformer_checkpoint.pth
+      PatchTST: checkpoints/POWER_Windy/PatchTST_checkpoint.pth
+      TimesNet: checkpoints/POWER_Windy/TimesNet_checkpoint.pth
+    num_clusters: 8
+    cp_threshold: 0.0
+    continuity_scale: 1.0
+    context_prompt_file: prompts/contextual_briefings/windy_power.txt
+
+  - name: SP
+    aliases: [power_sunny, sunny_power, sunny]
+    training_csv: dataset/POWER_NEW/sunny_power/sunny_power_train.csv
+    test_csv: dataset/POWER_NEW/sunny_power/sunny_power_test.csv
+    look_back: 96
+    predicted_window: 96
+    sliding_window: 96
+    frequency: 15min
+    checkpoints:
+      Autoformer: checkpoints/POWER_Sunny/Autoformer_checkpoint.pth
+      DLinear: checkpoints/POWER_Sunny/DLinear_checkpoint.pth
+      iTransformer: checkpoints/POWER_Sunny/iTransformer_checkpoint.pth
+      PatchTST: checkpoints/POWER_Sunny/PatchTST_checkpoint.pth
+      TimesNet: checkpoints/POWER_Sunny/TimesNet_checkpoint.pth
+    num_clusters: 8
+    cp_threshold: 0.0
+    continuity_scale: 0.5
+    context_prompt_file: prompts/contextual_briefings/sunny_power.txt
+
 
   # =========================================================================
   # MOPEX — daily streamflow discharge (hydrology)
@@ -99,29 +187,7 @@ datasets:
     sliding_window: 96
     frequency: D
     checkpoints: {}
+    num_clusters: 8
+    cp_threshold: 0.0
+    continuity_scale: 1.0
     context_prompt_file: prompts/contextual_briefings/MOPEX.txt
-
-  # =========================================================================
-  # POWER — wind & solar power generation (15-minute)
-  # =========================================================================
-  - name: POWER_Windy
-    aliases: [power_windy, windy_power, windy]
-    training_csv: dataset/POWER_NEW/windy_power/windy_power_train.csv
-    test_csv: dataset/POWER_NEW/windy_power/windy_power_test.csv
-    look_back: 96
-    predicted_window: 96
-    sliding_window: 96
-    frequency: 15min
-    checkpoints: {}
-    context_prompt_file: prompts/contextual_briefings/windy_power.txt
-
-  - name: POWER_Sunny
-    aliases: [power_sunny, sunny_power, sunny]
-    training_csv: dataset/POWER_NEW/sunny_power/sunny_power_train.csv
-    test_csv: dataset/POWER_NEW/sunny_power/sunny_power_test.csv
-    look_back: 96
-    predicted_window: 96
-    sliding_window: 96
-    frequency: 15min
-    checkpoints: {}
-    context_prompt_file: prompts/contextual_briefings/sunny_power.txt

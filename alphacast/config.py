@@ -16,6 +16,9 @@ class DatasetConfig:
     aliases: List[str] = field(default_factory=list)
     checkpoints: Dict[str, str] = field(default_factory=dict)
     context_prompt_file: Optional[str] = None
+    num_clusters: int = 6
+    cp_threshold: float = 0.0  # changepoint detection threshold (NOT L1 reg)
+    continuity_scale: float = 1.0  # multiplier on std(y) for cross-window continuity clamp
 
     def all_aliases(self) -> List[str]:
         base = {self.name.lower()}

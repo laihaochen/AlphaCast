@@ -54,3 +54,75 @@ ETTm1            4800   4800     1.3878     1.5198 +   0.1320     4.4539     5.1
 MOPEX            2448   2544     1.8645     1.6156   -0.2489     7.2612     6.7845  107.66%  104.14%      LLM ✅       ✅ done
 POWER_Windy      4800   4800    41.2784    36.1510   -5.1275  7839.2188  4104.7632  101.21%  115.21%      LLM ✅       ✅ done
 POWER_Sunny      4800   4800     3.6598     2.9916   -0.6681    37.1570    20.8068  152.80%  126.25%      LLM ✅       ✅ done
+
+=== Experiment Summary ===
+      dataset         MSE       MAE    sMAPE      model
+       EPF_BE   912.461700  14.970100  0.242700   LLM
+       EPF_DE   313.178700  11.925300  0.404500   LLM
+       EPF_FR   983.342800  12.615100  0.201800   LLM
+       EPF_NP    51.162500   4.762100  0.112600   LLM
+      EPF_PJM    67.307500   6.052200  0.200700   LLM
+        ETTh1     7.547600   2.051000  0.247200   LLM
+        ETTm1     5.142400   1.519800  0.171200   LLM
+        MOPEX     6.784500   1.615600  1.041400   LLM
+  POWER_Windy  4104.763200  36.151000  1.152100   LLM
+  POWER_Sunny    20.806800   2.991600  1.262500   LLM
+
+use Prophet like method: 
+
+cluster number = 6
+
+=== Experiment Summary ===
+       dataset          MSE        MAE    sMAPE  model
+----------------------------------------------------
+        EPF_BE   837.193506  13.517698 21.620682   LLM
+        EPF_DE   311.484928  11.888655 41.024828   LLM
+        EPF_FR  1009.739901  13.129733 19.962685   LLM
+        EPF_NP    67.445509   5.520811 12.731065   LLM
+         ETTh1    17.987541   2.813966 29.393694   LLM
+
+cluster number = 8
+=== Experiment Summary ===
+dataset          MSE        MAE    sMAPE  model
+----------------------------------------------------
+         ETTh1     6.684828   1.898590 23.364065   LLM
+         ETTm1    10.306592   2.194966 27.899605   LLM
+         MOPEX     6.853250   1.797281 99.958058   LLM
+         EPF_BE 1296.765746  16.851044  23.967050  LLM
+         SP    39.758037   5.153901 149.156056   LLM
+         WP  4291.558457  45.458732 127.432256   LLM
+
+cluster number = 12
+=== Experiment Summary ===
+       dataset          MSE        MAE    sMAPE  model
+----------------------------------------------------
+        EPF_BE  1127.289700  16.175370 24.083975   LLM
+        EPF_DE   348.818812  12.737527 41.776244   LLM
+        EPF_FR  1884.745541  19.315782 25.269471   LLM
+        EPF_NP    64.647214   5.577214 13.311429   LLM
+
+look back window 168 & predict window 24: 
+
+=== Experiment Summary ===
+dataset         MSE       MAE    sMAPE         model
+EPF_BE  929.385904 15.305820 0.254624 deterministic
+EPF_DE 270.356865 11.983317 0.430389 deterministic
+EPF_FR 1055.632457 13.184804 0.222037 deterministic
+EPF_NP  58.527168  4.993913 0.119927 deterministic
+EPF_PJM   59.779822  5.915755 0.209486 deterministic
+
+cluster number = 8: 
+
+=== Experiment Summary ===
+       dataset          MSE        MAE    sMAPE  model
+----------------------------------------------------
+        EPF_BE  1040.821823  15.230359 24.524822   LLM
+        EPF_DE   379.669480  13.016584 41.815353   LLM
+        EPF_FR   924.570971  11.295183 19.318897   LLM
+        EPF_NP   104.220352   6.830487 16.999784   LLM
+       EPF_PJM    69.313632   6.252568 20.780894   LLM
+         ETTh1     9.574161   2.295696 30.863487   LLM
+         ETTm1     4.185825   1.428940 16.276468   LLM
+            WP  2423.228974  33.437174 118.733618   LLM
+            SP    39.567563   4.461422 146.352150   LLM
+         MOPEX     5.464782   1.431894 83.219164   LLM

@@ -197,9 +197,10 @@ for ds in cfg["datasets"]:
     pred_o_vals = pred_o[col_o].to_numpy(dtype=float)
     pred_b_vals = pred_b[col_b].to_numpy(dtype=float)
 
-    # Align to same length
+    # Align to same length — use [:n] (not [-n:]) because predictions are
+    # aligned from the start of the test series, not the end.
     n = min(len(pred_o_vals), len(pred_b_vals), len(actual))
-    actual = actual[-n:]
+    actual = actual[:n]
     pred_o_vals = pred_o_vals[:n]
     pred_b_vals = pred_b_vals[:n]
 
@@ -270,23 +271,44 @@ for ds in cfg["datasets"]:
     ax.legend(fontsize=7, loc="upper right")
     ax.grid(True, alpha=0.3)
 
-    # --- (B) Error over time ---
+    # --- (B) LLM residuals over time ---
     ax = axes[0, 1]
-    err_o = p_o - actual_c
-    err_b = p_b - actual_c
-    lw = 0.4 if plot_len > 2000 else 0.8
-    ax.plot(x, err_b, "#2196F3", alpha=0.5, lw=lw, label="Baseline error")
-    if llm_active:
-        ax.plot(x, err_o, "#FF5722", alpha=0.7, lw=lw, label="LLM error")
-    ax.axhline(0, color="k", lw=0.5, ls="--")
-    ax.set_title(f"Prediction Error Over Time ({plot_len} steps)")
-    ax.set_xlabel("Time step")
-    ax.set_ylabel("Error (pred − actual)")
-    ax.legend(fontsize=7)
-    ax.grid(True, alpha=0.3)
+    # Load residual emissions from LLM (residuals.csv has time_stamp, prediction, window_offset, horizon_index)
+    res_csv = OUTPUTS_DIR / name / "residuals.csv"
+    if res_csv.exists():
+        try:
+            res_df = pd.read_csv(res_csv)
+            if "time_stamp" in res_df.columns and "prediction" in res_df.columns:
+                res_df["time_stamp"] = pd.to_datetime(res_df["time_stamp"])
+                # Dedup by time_stamp (keep last emission for each timestamp)
+                res_unique = res_df.sort_values("time_stamp").drop_duplicates(subset=["time_stamp"], keep="last")
+                res_vals = res_unique["prediction"].to_numpy(dtype=float)
+                # Align to test data: use first min(len(res), len(actual_c)) points
+                n_res = min(len(res_vals), len(actual_c))
+                res_aligned = res_vals[:n_res]
+                x_res = np.arange(n_res)
+                lw_res = 0.5 if n_res > 2000 else 1.0
+                ax.plot(x_res, res_aligned, "#7B1FA2", alpha=0.7, lw=lw_res, label="LLM residual")
+                ax.axhline(0, color="k", lw=0.5, ls="--")
+                ax.set_title(f"LLM Residual Emissions ({n_res} steps)")
+                ax.set_xlabel("Time step")
+                ax.set_ylabel("Residual value")
+                ax.legend(fontsize=7)
+                ax.grid(True, alpha=0.3)
+            else:
+                ax.text(0.5, 0.5, "No residual data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title("LLM Residuals (unavailable)")
+        except Exception:
+            ax.text(0.5, 0.5, "Failed to load residuals", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("LLM Residuals (load error)")
+    else:
+        ax.text(0.5, 0.5, "residuals.csv not found", ha="center", va="center", transform=ax.transAxes)
+        ax.set_title("LLM Residuals (not available)")
 
     # --- (C) Error distribution ---
     ax = axes[1, 0]
+    err_o = p_o - actual_c
+    err_b = p_b - actual_c
     bins = min(100, max(30, len(actual_c) // 30))
     ax.hist(err_b, bins=bins, alpha=0.5, color="#2196F3", density=True, label="Baseline")
     if llm_active:
@@ -477,4 +499,357 @@ if records:
     fig4.savefig(PLOTS_DIR / "00_delta_summary.png")
     print("→ saved 00_delta_summary.png")
 
+# =========================================================================
+# Prophet Decomposition Visualization
+# =========================================================================
+print(f"\n{'='*70}")
+print("Prophet decomposition visualization")
+print(f"{'='*70}")
+
+for ds in cfg["datasets"]:
+    name = ds["name"]
+    decomp_path = OUTPUTS_DIR / name / "prophet_decomposition.json"
+
+    if not decomp_path.exists():
+        print(f"  [{name}] No prophet_decomposition.json — skip")
+        continue
+
+    try:
+        with open(decomp_path) as f:
+            decomp = json.load(f)
+    except Exception as exc:
+        print(f"  [{name}] Failed to read: {exc} — skip")
+        continue
+
+    if not decomp.get("decomposition_enabled"):
+        print(f"  [{name}] Decomposition not enabled — skip")
+        continue
+
+    train_trend = decomp.get("train_trend") or []
+    train_seas = decomp.get("train_seasonality") or []
+    train_resid = decomp.get("train_residual") or []
+    train_ts_strs = decomp.get("train_timestamps") or []
+
+    test_trend = decomp.get("test_trend") or []
+    test_seas = decomp.get("test_seasonality") or []
+    test_ts_strs = decomp.get("test_timestamps") or []
+
+    if not train_trend:
+        print(f"  [{name}] Empty decomposition — skip")
+        continue
+
+    n_train = len(train_trend)
+    train_y = [train_trend[i] + train_seas[i] + train_resid[i] for i in range(n_train)]
+    train_trend_plus_seas = [train_trend[i] + train_seas[i] for i in range(n_train)]
+
+    # ---- Load test set ground truth ----
+    test_y = None
+    if test_ts_strs:
+        test_path = ROOT / ds["test_csv"]
+        test_df = safe_load_csv(test_path)
+        if test_df is not None and "date" in test_df.columns:
+            test_df["date"] = pd.to_datetime(test_df["date"])
+            target_col = get_target_col(test_df)
+            # Align by timestamp
+            ts_to_val = dict(zip(
+                test_df["date"].dt.strftime("%Y-%m-%dT%H:%M:%S"),
+                test_df[target_col].to_numpy(dtype=float),
+            ))
+            # Also try without seconds
+            ts_to_val2 = dict(zip(
+                test_df["date"].dt.strftime("%Y-%m-%dT%H:%M"),
+                test_df[target_col].to_numpy(dtype=float),
+            ))
+            test_y = []
+            for ts_str in test_ts_strs:
+                val = ts_to_val.get(ts_str[:19])  # truncate to seconds
+                if val is None:
+                    val = ts_to_val2.get(ts_str[:16])  # try minute precision
+                if val is None:
+                    val = ts_to_val.get(ts_str[:10])  # try date only
+                test_y.append(val)
+            test_y = [v for v in test_y if v is not None]
+        elif test_df is not None:
+            # No date column: align by position
+            target_col = get_target_col(test_df)
+            raw = test_df[target_col].to_numpy(dtype=float)
+            raw_clean = raw[~np.isnan(raw)]
+            n_match = min(len(test_trend), len(raw_clean))
+            test_y = raw_clean[:n_match].tolist()
+
+    has_test = test_y is not None and len(test_y) > 0
+    n_test = len(test_y) if has_test else 0
+    n_test_decomp = len(test_trend)
+
+    # Align test decomposition with test_y
+    if has_test:
+        n_align = min(n_test, n_test_decomp)
+        test_y = test_y[:n_align]
+        test_trend_aligned = test_trend[:n_align]
+        test_seas_aligned = test_seas[:n_align]
+        test_trend_plus_seas = [test_trend_aligned[i] + test_seas_aligned[i] for i in range(n_align)]
+        n_test = n_align
+    else:
+        # No ground truth; still show forecast components if available
+        n_test = n_test_decomp
+
+    # -------------------------------------------------------------------
+    # Figure layout: always 2×2
+    #   Top-left:  train — trend vs actual
+    #   Top-right: train — trend+seasonality vs actual
+    #   Bot-left:  test  — trend vs actual
+    #   Bot-right: test  — trend+seasonality vs actual
+    # -------------------------------------------------------------------
+    fig, axes = plt.subplots(2, 2, figsize=(20, 10))
+    (ax_tr_t, ax_tr_ts), (ax_te_t, ax_te_ts) = axes
+    fig.suptitle(f"{name} — Prophet Decomposition vs Actual", fontweight="bold", y=0.99)
+
+    # ---- Helper: downsample index for readability ----
+    def _ds_idx(n, limit=3000):
+        if n <= limit:
+            return np.arange(n)
+        step = max(1, n // limit)
+        return np.arange(0, n, step)
+
+    # =================================================================
+    # (A) Training: Trend vs Actual
+    # =================================================================
+    idx_tr = _ds_idx(n_train)
+    x_tr = np.arange(n_train)
+
+    ax_tr_t.plot(x_tr[idx_tr], [train_y[i] for i in idx_tr], "#90A4AE", alpha=0.5, lw=0.5, label="Actual y(t)")
+    ax_tr_t.plot(x_tr, train_trend, "#E65100", alpha=0.9, lw=1.3, label="Prophet Trend(t)")
+    ax_tr_t.set_title(f"Training Set: Trend vs Actual (n={n_train})")
+    ax_tr_t.set_xlabel("Training time step")
+    ax_tr_t.set_ylabel("Value")
+    ax_tr_t.legend(fontsize=8, loc="upper left")
+    ax_tr_t.grid(True, alpha=0.3)
+
+    # Annotate fit quality
+    trend_mae = np.mean(np.abs(np.array(train_trend) - np.array(train_y)))
+    trend_corr = np.corrcoef(train_trend, train_y)[0, 1]
+    ax_tr_t.text(0.02, 0.97,
+                  f"Trend vs Actual: MAE={trend_mae:.4f}   corr={trend_corr:.4f}",
+                  transform=ax_tr_t.transAxes, fontsize=7, va="top", ha="left",
+                  bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.7))
+
+    # =================================================================
+    # (B) Training: Trend + Seasonality vs Actual
+    # =================================================================
+    ax_tr_ts.plot(x_tr[idx_tr], [train_y[i] for i in idx_tr], "#90A4AE", alpha=0.5, lw=0.5, label="Actual y(t)")
+    ax_tr_ts.plot(x_tr, train_trend_plus_seas, "#1565C0", alpha=0.85, lw=1.0, label="Prophet Trend(t) + Seasonality(t)")
+    ax_tr_ts.set_title(f"Training Set: Trend + Seasonality vs Actual (n={n_train})")
+    ax_tr_ts.set_xlabel("Training time step")
+    ax_tr_ts.set_ylabel("Value")
+    ax_tr_ts.legend(fontsize=8, loc="upper left")
+    ax_tr_ts.grid(True, alpha=0.3)
+
+    ts_mae = np.mean(np.abs(np.array(train_trend_plus_seas) - np.array(train_y)))
+    ts_corr = np.corrcoef(train_trend_plus_seas, train_y)[0, 1]
+    ax_tr_ts.text(0.02, 0.97,
+                   f"Trend+Seas vs Actual: MAE={ts_mae:.4f}   corr={ts_corr:.4f}",
+                   transform=ax_tr_ts.transAxes, fontsize=7, va="top", ha="left",
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor="#E3F2FD", alpha=0.7))
+
+    # ---- Load per-window combined trend (global + local) if available ----
+    combined_trend_aligned = None
+    combined_seas_aligned = None
+    components_path = OUTPUTS_DIR / name / "prophet_components.csv"
+    if components_path.exists():
+        try:
+            comp_df = pd.read_csv(components_path)
+            if "time_stamp" in comp_df.columns and "trend_combined" in comp_df.columns:
+                comp_df["time_stamp"] = pd.to_datetime(comp_df["time_stamp"])
+                # Deduplicate by timestamp (keep last emission per timestamp)
+                comp_df = comp_df.sort_values("time_stamp", kind="mergesort")
+                comp_df = comp_df.drop_duplicates(subset=["time_stamp"], keep="last")
+                comp_df = comp_df.sort_values("time_stamp").reset_index(drop=True)
+                # Align with test_y timestamps
+                if test_ts_strs:
+                    ts_to_trend = dict(zip(
+                        comp_df["time_stamp"].dt.strftime("%Y-%m-%dT%H:%M:%S"),
+                        comp_df["trend_combined"].to_numpy(dtype=float),
+                    ))
+                    ts_to_seas = dict(zip(
+                        comp_df["time_stamp"].dt.strftime("%Y-%m-%dT%H:%M:%S"),
+                        comp_df["seasonality"].to_numpy(dtype=float),
+                    ))
+                    combined_trend_aligned = []
+                    combined_seas_aligned = []
+                    for ts_str in test_ts_strs[:n_test]:
+                        val_t = ts_to_trend.get(ts_str[:19])
+                        val_s = ts_to_seas.get(ts_str[:19])
+                        combined_trend_aligned.append(float(val_t) if val_t is not None else None)
+                        combined_seas_aligned.append(float(val_s) if val_s is not None else None)
+                    # Fill gaps with global trend as fallback
+                    for i in range(len(combined_trend_aligned)):
+                        if combined_trend_aligned[i] is None:
+                            combined_trend_aligned[i] = test_trend_aligned[i] if i < len(test_trend_aligned) else 0.0
+                        if combined_seas_aligned[i] is None:
+                            combined_seas_aligned[i] = test_seas_aligned[i] if i < len(test_seas_aligned) else 0.0
+                    has_combined = True
+                else:
+                    has_combined = False
+            else:
+                has_combined = False
+        except Exception:
+            has_combined = False
+    else:
+        has_combined = False
+
+    print(f"  [{name}] train={n_train} points, test={n_test} points, combined_trend={'yes' if has_combined else 'no'} → generating plots...")
+
+    # -------------------------------------------------------------------
+    # Figure layout: always 2×2
+    # -------------------------------------------------------------------
+    fig, axes = plt.subplots(2, 2, figsize=(20, 10))
+    (ax_tr_t, ax_tr_ts), (ax_te_t, ax_te_ts) = axes
+    fig.suptitle(f"{name} — Prophet Decomposition vs Actual", fontweight="bold", y=0.99)
+
+    def _ds_idx(n, limit=3000):
+        if n <= limit: return np.arange(n)
+        step = max(1, n // limit)
+        return np.arange(0, n, step)
+
+    # =================================================================
+    # (A) Training: Trend vs Actual
+    # =================================================================
+    idx_tr = _ds_idx(n_train)
+    x_tr = np.arange(n_train)
+
+    ax_tr_t.plot(x_tr[idx_tr], [train_y[i] for i in idx_tr], "#90A4AE", alpha=0.5, lw=0.5, label="Actual y(t)")
+    ax_tr_t.plot(x_tr, train_trend, "#E65100", alpha=0.9, lw=1.3, label="Prophet Trend(t)")
+    ax_tr_t.set_title(f"Training Set: Trend vs Actual (n={n_train})")
+    ax_tr_t.set_xlabel("Training time step")
+    ax_tr_t.set_ylabel("Value")
+    ax_tr_t.legend(fontsize=8, loc="upper left")
+    ax_tr_t.grid(True, alpha=0.3)
+    trend_mae = np.mean(np.abs(np.array(train_trend) - np.array(train_y)))
+    trend_corr = np.corrcoef(train_trend, train_y)[0, 1]
+    ax_tr_t.text(0.02, 0.97, f"Trend vs Actual: MAE={trend_mae:.4f}   corr={trend_corr:.4f}",
+                  transform=ax_tr_t.transAxes, fontsize=7, va="top", ha="left",
+                  bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.7))
+
+    # =================================================================
+    # (B) Training: Trend + Seasonality vs Actual
+    # =================================================================
+    ax_tr_ts.plot(x_tr[idx_tr], [train_y[i] for i in idx_tr], "#90A4AE", alpha=0.5, lw=0.5, label="Actual y(t)")
+    ax_tr_ts.plot(x_tr, train_trend_plus_seas, "#1565C0", alpha=0.85, lw=1.0, label="Prophet Trend(t) + Seasonality(t)")
+    ax_tr_ts.set_title(f"Training Set: Trend + Seasonality vs Actual (n={n_train})")
+    ax_tr_ts.set_xlabel("Training time step")
+    ax_tr_ts.set_ylabel("Value")
+    ax_tr_ts.legend(fontsize=8, loc="upper left")
+    ax_tr_ts.grid(True, alpha=0.3)
+    ts_mae = np.mean(np.abs(np.array(train_trend_plus_seas) - np.array(train_y)))
+    ts_corr = np.corrcoef(train_trend_plus_seas, train_y)[0, 1]
+    ax_tr_ts.text(0.02, 0.97, f"Trend+Seas vs Actual: MAE={ts_mae:.4f}   corr={ts_corr:.4f}",
+                   transform=ax_tr_ts.transAxes, fontsize=7, va="top", ha="left",
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor="#E3F2FD", alpha=0.7))
+
+    # =================================================================
+    # (C) Test: Trend vs Actual
+    #   Shows global trend (dashed, from full train.csv) +
+    #   combined trend (solid, global + per-window local correction)
+    # =================================================================
+    if has_test:
+        idx_te = _ds_idx(n_test)
+        x_te = np.arange(n_test)
+
+        # Pre-compute all metrics before plotting
+        trend_test_mae = np.mean(np.abs(np.array(test_trend_aligned) - np.array(test_y)))
+        trend_test_corr = np.corrcoef(test_trend_aligned, test_y)[0, 1] if n_test >= 2 else 0.0
+        ts_test_mae = np.mean(np.abs(np.array(test_trend_plus_seas) - np.array(test_y)))
+        ts_test_corr = np.corrcoef(test_trend_plus_seas, test_y)[0, 1] if n_test >= 2 else 0.0
+
+        ax_te_t.plot(x_te[idx_te], [test_y[i] for i in idx_te], "#424242", alpha=0.6, lw=0.7, label="Actual y(t)")
+        ax_te_t.plot(x_te, test_trend_aligned, "#78909C", alpha=0.8, lw=1.2, label="Global trend only")
+        if has_combined and combined_trend_aligned:
+            ax_te_t.plot(x_te, combined_trend_aligned, "#E65100", alpha=0.9, lw=1.4, label="Combined trend (global + local)")
+            comb_t_mae = np.mean(np.abs(np.array(combined_trend_aligned) - np.array(test_y)))
+            comb_t_corr = np.corrcoef(combined_trend_aligned, test_y)[0, 1] if n_test >= 2 else 0.0
+            label_t = (f"Global Trend MAE={trend_test_mae:.4f}   corr={trend_test_corr:.4f}\n"
+                       f"Combined Trend MAE={comb_t_mae:.4f}   corr={comb_t_corr:.4f}")
+        ax_te_t.set_title(f"Test Set: Trend Forecast vs Actual (n={n_test})")
+        ax_te_t.set_xlabel("Test time step")
+        ax_te_t.set_ylabel("Value")
+        ax_te_t.legend(fontsize=7.5, loc="upper left")
+        ax_te_t.grid(True, alpha=0.3)
+
+        if has_combined and combined_trend_aligned:
+            ax_te_t.text(0.02, 0.97, label_t,
+                          transform=ax_te_t.transAxes, fontsize=7, va="top", ha="left",
+                          bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.85))
+        else:
+            ax_te_t.text(0.02, 0.97, f"Global Trend MAE={trend_test_mae:.4f}   corr={trend_test_corr:.4f}",
+                          transform=ax_te_t.transAxes, fontsize=7, va="top", ha="left",
+                          bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.7))
+
+        # =================================================================
+        # (D) Test: Trend + Seasonality vs Actual
+        # =================================================================
+        ax_te_ts.plot(x_te[idx_te], [test_y[i] for i in idx_te], "#424242", alpha=0.6, lw=0.7, label="Actual y(t)")
+        ax_te_ts.plot(x_te, test_trend_plus_seas, "#64B5F6", alpha=0.75, lw=1.2, label="Global Trend + Seasonality")
+        if has_combined and combined_trend_aligned and combined_seas_aligned:
+            comb_ts = [combined_trend_aligned[i] + combined_seas_aligned[i] for i in range(n_test)]
+            ax_te_ts.plot(x_te, comb_ts, "#1565C0", alpha=0.85, lw=1.2, label="Combined Trend + Seasonality")
+            comb_ts_mae = np.mean(np.abs(np.array(comb_ts) - np.array(test_y)))
+            comb_ts_corr = np.corrcoef(comb_ts, test_y)[0, 1] if n_test >= 2 else 0.0
+            label_ts = (f"Global T+S MAE={ts_test_mae:.4f}   corr={ts_test_corr:.4f}\n"
+                        f"Combined T+S MAE={comb_ts_mae:.4f}   corr={comb_ts_corr:.4f}")
+        ax_te_ts.set_title(f"Test Set: Trend + Seasonality Forecast vs Actual (n={n_test})")
+        ax_te_ts.set_xlabel("Test time step")
+        ax_te_ts.set_ylabel("Value")
+        ax_te_ts.legend(fontsize=7.5, loc="upper left")
+        ax_te_ts.grid(True, alpha=0.3)
+
+        if has_combined and combined_trend_aligned:
+            ax_te_ts.text(0.02, 0.97, label_ts,
+                           transform=ax_te_ts.transAxes, fontsize=7, va="top", ha="left",
+                           bbox=dict(boxstyle="round,pad=0.3", facecolor="#E3F2FD", alpha=0.85))
+        else:
+            ax_te_ts.text(0.02, 0.97, f"Global T+S vs Actual: MAE={ts_test_mae:.4f}   corr={ts_test_corr:.4f}",
+                           transform=ax_te_ts.transAxes, fontsize=7, va="top", ha="left",
+                           bbox=dict(boxstyle="round,pad=0.3", facecolor="#E3F2FD", alpha=0.7))
+    else:
+        # No test ground truth: just show forecast components
+        idx_te = _ds_idx(n_test_decomp)
+        x_te = np.arange(n_test_decomp)
+
+        ax_te_t.plot(x_te[idx_te], [test_trend[i] for i in idx_te], "#E65100", alpha=0.9, lw=1.2, label="Trend forecast")
+        ax_te_t.set_title(f"Test Set: Trend Forecast (no ground truth) (n={n_test_decomp})")
+        ax_te_t.set_xlabel("Test time step")
+        ax_te_t.set_ylabel("Value")
+        ax_te_t.legend(fontsize=8)
+        ax_te_t.grid(True, alpha=0.3)
+
+        test_composite = [test_trend[i] + test_seas[i] for i in range(n_test_decomp)]
+        ax_te_ts.plot(x_te[idx_te], [test_trend[i] for i in idx_te], "#E65100", alpha=0.6, lw=0.8, label="Trend")
+        ax_te_ts.plot(x_te[idx_te], [test_seas[i] for i in idx_te], "#2E7D32", alpha=0.6, lw=0.8, label="Seasonality")
+        ax_te_ts.plot(x_te[idx_te], [test_composite[i] for i in idx_te], "#1565C0", alpha=0.9, lw=1.2, label="Trend + Seasonality")
+        ax_te_ts.set_title(f"Test Set: Forecast Components (no ground truth) (n={n_test_decomp})")
+        ax_te_ts.set_xlabel("Test time step")
+        ax_te_ts.set_ylabel("Value")
+        ax_te_ts.legend(fontsize=8)
+        ax_te_ts.grid(True, alpha=0.3)
+
+    # -------------------------------------------------------------------
+    # Save
+    # -------------------------------------------------------------------
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    out_path = PLOTS_DIR / f"{name}_prophet_decomposition.png"
+    fig.savefig(out_path)
+    plt.close(fig)
+    print(f"  → saved {name}_prophet_decomposition.png")
+
 print(f"\n✅ All plots saved to: {PLOTS_DIR}/")
+
+# =========================================================================
+# Final summary table (same format as result.txt)
+# =========================================================================
+if records:
+    print(f"\n=== Experiment Summary ===")
+    print(f"{'dataset':>14} {'MSE':>12} {'MAE':>10} {'sMAPE':>8}  model")
+    print("-" * 52)
+    for r in records:
+        print(f"{r['name']:>14} {r['mse_o']:>12.6f} {r['mae_o']:>10.6f} {r['smape_o']:>8.6f}   LLM")
+    print()

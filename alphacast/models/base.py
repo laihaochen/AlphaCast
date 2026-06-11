@@ -1219,34 +1219,77 @@ class ProphetModel(ForecastModel):
     def predict(self, h: int, **kwargs) -> np.ndarray:
         """
         Generate forecasts for h periods into the future.
-        
+
         Args:
             h: Number of periods to forecast
             t: Optional time array for time series data
-            
-            
+
+
         Returns:
             Numpy array with forecast values
         """
         assert self._fitted is not None, "Model must be fitted before prediction"
-        
+
         # Convert time array to datetime if provided
         t = kwargs.get("future_timestamps", None)
         if t is not None:
             t = pd.to_datetime(t)
         else :
             raise ValueError("Prophet model requires time array (future_timestamps) for fitting")
-        
+
         # Create future dataframe
         future = pd.DataFrame({
             'ds': t
         })
-        
+
         # Generate forecast
         fcst = self._fitted.predict(future)
-        
+
         # Return only the forecast period (last h rows)
-        return np.asarray(fcst.tail(h)['yhat'], dtype=float)    
+        return np.asarray(fcst.tail(h)['yhat'], dtype=float)
+
+    def decompose(self, timestamps, future_timestamps=None) -> dict:
+        """
+        Decompose time series into Prophet components (trend, seasonality, residual).
+
+        For training timestamps: returns decomposition for every point.
+        For future timestamps (prediction window): returns forecast decomposition.
+
+        Args:
+            timestamps: Training timestamps (for fit + train decomposition)
+            future_timestamps: Optional future timestamps for forecast decomposition
+
+        Returns:
+            {
+                "trend": np.ndarray,          # trend component
+                "seasonality": np.ndarray,    # sum of weekly + yearly + daily + additive_terms
+                "weekly": np.ndarray,         # weekly season component
+                "yearly": np.ndarray,         # yearly season component
+                "daily": np.ndarray,           # daily season component (0 if not applicable)
+            }
+        """
+        assert self._fitted is not None, "Model must be fitted before decomposition"
+
+        t = pd.to_datetime(timestamps)
+        future_df = pd.DataFrame({"ds": t})
+        fcst = self._fitted.predict(future_df)
+
+        trend = np.asarray(fcst["trend"], dtype=float)
+
+        weekly = np.asarray(fcst.get("weekly", pd.Series([0.0] * len(fcst))), dtype=float)
+        yearly = np.asarray(fcst.get("yearly", pd.Series([0.0] * len(fcst))), dtype=float)
+        daily = np.asarray(fcst.get("daily", pd.Series([0.0] * len(fcst))), dtype=float)
+
+        # Seasonality = sum of periodic components
+        seasonality = weekly + yearly + daily
+
+        return {
+            "trend": trend,
+            "seasonality": seasonality,
+            "weekly": weekly,
+            "yearly": yearly,
+            "daily": daily,
+        }
     
 @dataclass
 class HoltWintersModel(ForecastModel):

@@ -23,7 +23,7 @@ from ..tools.analysis import (
     choose_model_by_similarity,
     choose_neighbor_by_similarity,
 )
-from ..tools.forecast import forecast_with_model, save_predictions_csv
+from ..tools.forecast import _forecast_regularized_trend, forecast_with_model, get_prophet_forecast_components, save_predictions_csv
 from ..utils.time import (
     CaseEntry,
     CaseNeighbor,
@@ -47,6 +47,40 @@ def json_default(value: Any) -> Any:
     if isinstance(value, pd.DataFrame):
         return value.to_dict(orient="records")
     return value
+
+
+def _find_window_position_in_train(
+    window_vals: list,
+    train_y: np.ndarray,
+    look_back: int,
+) -> Optional[int]:
+    """
+    Find the starting index in train_y where window_vals best matches.
+
+    First attempts exact-match with floating tolerance, then falls back to
+    correlation-based matching. Returns None if no reasonable match is found.
+    """
+    if train_y is None or len(train_y) < look_back or not window_vals:
+        return None
+
+    window_arr = np.asarray(window_vals, dtype=float)
+    train_arr = np.asarray(train_y, dtype=float)
+
+    if len(window_arr) != look_back:
+        return None
+
+    # Try exact match first
+    best_dist = float("inf")
+    best_idx = None
+    for i in range(len(train_arr) - look_back + 1):
+        dist = np.sum((train_arr[i : i + look_back] - window_arr) ** 2)
+        if dist < best_dist:
+            best_dist = dist
+            best_idx = i
+            if dist < 1e-10:
+                break  # Exact match found
+
+    return best_idx
 
 
 def prepare_investor_packet(
@@ -79,6 +113,9 @@ def prepare_investor_packet(
     case_base_raw = _read_json("case_base.json") or []
     case_neighbor_raw = _read_json("case_neighbor.json") or []
     cluster_base_raw = _read_json("cluster_base.json") or []
+
+    prophet_decomp = _read_json("prophet_decomposition.json") or {}
+    decomposition_enabled = bool(prophet_decomp.get("decomposition_enabled", False))
 
     train_df = pd.read_csv(ds_cfg.training_csv)
     train_df[TIME_COL] = pd.to_datetime(train_df[TIME_COL])
@@ -429,10 +466,157 @@ def prepare_investor_packet(
     with open(os.path.join(ds_out_dir, "basemodel_results.json"), "w", encoding="utf-8") as f:
         json.dump(basemodel_results, f, indent=2)
 
+    # === Prophet 双组件趋势分解 + 残差空间转换 ===
+    # trend_final(t) = trend_global(t) + trend_local(t)
+    # seasonality(t)   = seasonality_global(t)   (global only, needs lots of data)
+    look_back_residuals = [float(v) for v in window_vals]
+    reference_residual = reference_prediction
+    neighbor_residual_lookback = neighbor_lookback
+    neighbor_residual_pred = neighbor_pred
+    prophet_trend_forecast: List[float] = []       # combined trend = global + local
+    prophet_trend_global: List[float] = []
+    prophet_trend_local: List[float] = []
+    prophet_seasonality_forecast: List[float] = []
+
+    if decomposition_enabled and prophet_decomp:
+        # ---- Step 1: Look up global trend + seasonality for lookback window ----
+        look_back_ts_strs = [pd.Timestamp(ts).isoformat() for ts in window_ts]
+        lb_components = get_prophet_forecast_components(ds_out_dir, look_back_ts_strs)
+        lb_trend_global = lb_components.get("trend") or []
+        lb_seas_global = lb_components.get("seasonality") or []
+
+        if not lb_trend_global or len(lb_trend_global) != len(window_vals):
+            # Fallback: use training decomposition directly
+            train_trend_arr = prophet_decomp.get("train_trend") or []
+            train_seas_arr = prophet_decomp.get("train_seasonality") or []
+            train_ts_arr = prophet_decomp.get("train_timestamps") or []
+            ts_to_idx = {ts: i for i, ts in enumerate(train_ts_arr)}
+            lb_trend_global = []
+            lb_seas_global = []
+            for ts in window_ts:
+                ts_str = pd.Timestamp(ts).isoformat()
+                idx = ts_to_idx.get(ts_str)
+                if idx is not None and idx < len(train_trend_arr):
+                    lb_trend_global.append(float(train_trend_arr[idx]))
+                    lb_seas_global.append(float(train_seas_arr[idx]))
+                else:
+                    lb_trend_global.append(0.0)
+                    lb_seas_global.append(0.0)
+
+        # ---- Step 2: Get global trend + seasonality for forecast window ----
+        prophet_trend_global = []
+        if forecast_window_timestamps and len(forecast_window_timestamps) > 0:
+            fw_components = get_prophet_forecast_components(ds_out_dir, forecast_window_timestamps)
+            prophet_trend_global = fw_components.get("trend") or []
+            prophet_seasonality_forecast = fw_components.get("seasonality") or []
+
+        # ---- Step 3: Compute detrended lookback residuals ----
+        # r_lb = y_lb - trend_global_lb - seasonality_global_lb
+        detrended_lb = np.asarray([
+            float(window_vals[i]) - float(lb_trend_global[i]) - float(lb_seas_global[i])
+            for i in range(len(window_vals))
+        ], dtype=float)
+
+        # ---- Step 4: Fit local trend on detrended lookback ----
+        fc_horizon = int(ref_horizon) if ref_horizon > 0 else int(ds_cfg.predicted_window)
+        # Only fit local trend if both lookback and forecast windows are populated
+        if len(detrended_lb) >= 2 and fc_horizon > 0 and prophet_trend_global:
+            try:
+                _ema_slope = getattr(prepare_investor_packet, "_ema_slope", {})
+                _ema_boundary = getattr(prepare_investor_packet, "_ema_boundary", {})
+                prev_s = _ema_slope.get(dataset_name)
+                prev_b = _ema_boundary.get(dataset_name)
+                fc, new_s, boundary, has_cp, cp_pos = _forecast_regularized_trend(
+                    detrended_lb, fc_horizon,
+                    prev_slope=prev_s, prev_boundary=prev_b,
+                    ema_alpha=0.05,
+                    cp_threshold=ds_cfg.cp_threshold,
+                    continuity_scale=ds_cfg.continuity_scale,
+                )
+                _ema_slope[dataset_name] = new_s
+                _ema_boundary[dataset_name] = boundary
+                prepare_investor_packet._ema_slope = _ema_slope
+                prepare_investor_packet._ema_boundary = _ema_boundary
+                prophet_trend_local = fc.tolist()
+            except Exception:
+                # Fallback: no local correction
+                prophet_trend_local = [0.0] * fc_horizon
+        else:
+            prophet_trend_local = ([0.0] * fc_horizon) if fc_horizon > 0 else []
+
+        # ---- Step 5: Combine trend = global + local ----
+        if prophet_trend_global and prophet_trend_local and len(prophet_trend_global) == len(prophet_trend_local):
+            prophet_trend_forecast = [
+                float(prophet_trend_global[i]) + float(prophet_trend_local[i])
+                for i in range(len(prophet_trend_global))
+            ]
+        elif prophet_trend_global:
+            prophet_trend_forecast = [float(v) for v in prophet_trend_global]
+        else:
+            prophet_trend_forecast = []
+
+        # ---- Step 6: Convert look_back to residual space ----
+        # residual = y - trend_global - seasonality_global (lookback uses global only)
+        look_back_residuals = detrended_lb.tolist()
+
+        # ---- Step 7: Convert reference_prediction to residual space ----
+        # reference_residual = reference_raw - trend_combined_fc - seasonality_fc
+        if reference_prediction and prophet_trend_forecast:
+            n_ref = min(len(reference_prediction), len(prophet_trend_forecast))
+            reference_residual = [
+                float(reference_prediction[i])
+                - float(prophet_trend_forecast[i])
+                - float(prophet_seasonality_forecast[i])
+                for i in range(n_ref)
+            ]
+            if len(reference_residual) < len(reference_prediction):
+                reference_residual = list(reference_residual) + reference_prediction[len(reference_residual):]
+
+        # ---- Step 8: Convert neighbor windows to residual space ----
+        train_y_full = train_df[target_col].to_numpy(dtype=float)
+        train_trend_arr = prophet_decomp.get("train_trend") or []
+        train_seas_arr = prophet_decomp.get("train_seasonality") or []
+
+        if neighbor_lookback and train_trend_arr and len(train_trend_arr) == len(train_y_full):
+            nlb_pos = _find_window_position_in_train(neighbor_lookback, train_y_full, look_back)
+            if nlb_pos is not None:
+                neighbor_residual_lookback = [
+                    float(neighbor_lookback[i])
+                    - float(train_trend_arr[nlb_pos + i])
+                    - float(train_seas_arr[nlb_pos + i])
+                    for i in range(look_back)
+                ]
+
+        if neighbor_pred and train_trend_arr and len(train_trend_arr) == len(train_y_full):
+            if neighbor_residual_lookback is not neighbor_lookback and neighbor_lookback:
+                nlb_pos = _find_window_position_in_train(neighbor_lookback, train_y_full, look_back)
+                if nlb_pos is not None:
+                    pred_start = nlb_pos + look_back
+                    n_pred = min(len(neighbor_pred), len(train_trend_arr) - pred_start)
+                    if n_pred > 0:
+                        neighbor_residual_pred = [
+                            float(neighbor_pred[i])
+                            - float(train_trend_arr[pred_start + i])
+                            - float(train_seas_arr[pred_start + i])
+                            for i in range(n_pred)
+                        ]
+            elif neighbor_lookback:
+                nlb_pos = _find_window_position_in_train(neighbor_lookback, train_y_full, look_back)
+                if nlb_pos is not None:
+                    pred_start = nlb_pos + look_back
+                    n_pred = min(len(neighbor_pred), len(train_trend_arr) - pred_start)
+                    if n_pred > 0:
+                        neighbor_residual_pred = [
+                            float(neighbor_pred[i])
+                            - float(train_trend_arr[pred_start + i])
+                            - float(train_seas_arr[pred_start + i])
+                            for i in range(n_pred)
+                        ]
+
     return {
         "dataset": dataset_name,
         "look_back_length": look_back,
-        "look_back_window": [float(v) for v in window_vals],
+        "look_back_window": look_back_residuals,
         "look_back_timestamps": [ts.isoformat() for ts in window_ts],
         "look_back_source": window_source,
         "window_offset": offset,
@@ -460,9 +644,15 @@ def prepare_investor_packet(
         "best_model_name": best_model,
         "configured_model_name": configured_model,
         "recommended_model_name": recommended_model,
-        "reference_prediction": reference_prediction,
-        "neighbor_lookback": neighbor_lookback,
-        "neighbor_pred": neighbor_pred,
+        "reference_prediction": reference_residual,
+        "neighbor_lookback": neighbor_residual_lookback,
+        "neighbor_pred": neighbor_residual_pred,
+        # === Prophet 双组件趋势字段 ===
+        "prophet_trend_forecast": prophet_trend_forecast,        # combined = global + local
+        "prophet_trend_global": prophet_trend_global,            # long-term trend from full train.csv
+        "prophet_trend_local": prophet_trend_local,              # per-window local correction
+        "prophet_seasonality_forecast": prophet_seasonality_forecast,
+        "decomposition_enabled": decomposition_enabled,
     }
 
 

@@ -17,16 +17,55 @@ from .prompts import get_agent_instructions
 GENERATOR_AGENT_PROMPT_FALLBACK = dedent(
     """
     You are GeneratorAgent, a world-class time-series forecasting expert operating in a multi-agent workflow.
+
+    The time series has been pre-decomposed by Prophet into trend(t), seasonality(t), and residual(t).
+    You predict only the RESIDUAL component. The system automatically assembles:
+      final(t) = trend(t) + seasonality(t) + your_residual(t)
+
     Each forecasting step must follow this sequence:
       1. Call `consult` exactly once to obtain the InvestigatorAgent research packet for the requested dataset/window.
-      2. Examine the packet carefully. Use `reference_prediction` as the baseline, consult neighbor guidance and exogenous trends, and only adjust the baseline when evidence clearly supports a correction.
-      3. Record a brief "Reflection" that confirms the prediction length equals `predicted_window`, all pending `emit_predictions` arguments are correct (including window_offset), and the forecast aligns with the baseline guidance and exogenous outlook.
+      2. Examine the packet carefully. `reference_prediction` is now the baseline model's RESIDUAL prediction. `look_back_window` contains historical RESIDUALS. `prophet_trend_forecast` and `prophet_seasonality_forecast` are for context only. Only adjust the baseline when evidence clearly supports a correction.
+      3. Record a brief "Reflection" that confirms the prediction list contains RESIDUAL values of length equal to `predicted_window`, all pending `emit_predictions` arguments are correct (including window_offset), and the forecast aligns with the baseline guidance and exogenous outlook.
       4. Call `record_chain_of_thought` exactly once with dataset_name, window_offset, and a concise summary referencing the evidence and any adjustments (or the decision to keep the baseline).
-      5. Call `emit_predictions` exactly once with the prediction list and required metadata (training_csv, predicted_window, output_dir, dataset_name, frequency, window_offset, start_timestamp, selected_features, feature_weights, and optional exogenous selections).
+      5. Call `emit_predictions` exactly once with RESIDUAL predictions (NOT raw time series values!) and required metadata (training_csv, predicted_window, output_dir, dataset_name, frequency, window_offset, start_timestamp, selected_features, feature_weights, and optional exogenous selections).
 
     Use no tools other than `consult`, `record_chain_of_thought`, and `emit_predictions`.
+    Do NOT add trend or seasonality yourself.
     """
 )
+
+
+def _apply_residual_bounds(arr: np.ndarray, dataset_name: str, output_dir: str) -> None:
+    """Clamp residual predictions to training residual range to prevent extreme LLM outputs.
+
+    Loads training residual min/max/std from prophet_decomposition.json and clips
+    ``arr`` in-place to [min - buffer, max + buffer] where buffer = 1.5 * std.
+    """
+    import json as _json
+    ds_dir = os.path.join(output_dir, dataset_name)
+    decomp_path = os.path.join(ds_dir, "prophet_decomposition.json")
+    if not os.path.exists(decomp_path):
+        return
+    try:
+        with open(decomp_path, "r", encoding="utf-8") as f:
+            decomp = _json.load(f)
+    except Exception:
+        return
+    train_res = decomp.get("train_residual")
+    if not isinstance(train_res, list) or len(train_res) < 10:
+        return
+    r = np.asarray(train_res, dtype=float)
+    r_min, r_max, r_std = float(r.min()), float(r.max()), float(np.std(r))
+    buffer = 1.5 * r_std
+    lo, hi = r_min - buffer, r_max + buffer
+    clipped = np.clip(arr, lo, hi)
+    n_clipped = int(np.sum(clipped != arr))
+    if n_clipped > 0:
+        print(
+            f"[warn] Residual bounds: clipped {n_clipped}/{len(arr)} values "
+            f"to [{lo:.3f}, {hi:.3f}] (train range [{r_min:.3f}, {r_max:.3f}] ± {buffer:.3f})"
+        )
+        arr[:] = clipped
 
 
 def create_generator_agent(
@@ -132,16 +171,82 @@ def create_generator_agent(
         n = len(predictions)
         if n == 0:
             raise ValueError("predictions must be a non-empty list of floats")
-        if n != H:
-            print(f"[warn] Normalizing LLM predictions length from {n} to {H} by {'trimming' if n>H else 'padding'}")
-            if n > H:
-                predictions = predictions[:H]
-            else:
-                last_val = float(predictions[-1])
-                predictions = predictions + [last_val] * (H - n)
-        arr = np.asarray(predictions, dtype=float)
+
+        # --- Anchor correction mode: 3-6 anchors → expand to full residual ---
+        # When the LLM provides a short list (3-6 values), treat them as
+        # correction OFFSETS from reference_prediction. The system linearly
+        # interpolates the offsets over the full horizon and adds them to the
+        # reference to build the final residual forecast.
+        ANCHOR_MIN, ANCHOR_MAX = 3, 6
+        is_anchor_mode = ANCHOR_MIN <= n <= ANCHOR_MAX and n < H
+
+        if is_anchor_mode:
+            anchors = np.asarray(predictions, dtype=float)
+            # Load reference_prediction from cached investor packet
+            ref_pred = None
+            ds_cfg_anchor = dataset_lookup.get(dataset_name)
+            investor_packet_anchor = investigator_cache.get((dataset_name, window_offset_int))
+            if investor_packet_anchor is None and ds_cfg_anchor is not None:
+                try:
+                    investor_packet_anchor = prepare_investor_packet(
+                        cfg, ds_cfg_anchor, briefing_lookup, window_offset_int, H,
+                    )
+                except Exception:
+                    investor_packet_anchor = {}
+            if investor_packet_anchor:
+                ref_raw = investor_packet_anchor.get("reference_prediction")
+                if isinstance(ref_raw, list) and len(ref_raw) == H:
+                    ref_pred = np.asarray(ref_raw, dtype=float)
+
+            if ref_pred is None:
+                # Fallback: try to load from basemodel_results
+                ds_dir = os.path.join(output_dir, dataset_name)
+                bmr_path = os.path.join(ds_dir, "basemodel_results.json")
+                if os.path.exists(bmr_path):
+                    try:
+                        with open(bmr_path, "r") as f:
+                            bmr = json.load(f)
+                        for entry in reversed(bmr):
+                            rp = entry.get("reference_prediction")
+                            if isinstance(rp, list) and len(rp) == H:
+                                ref_pred = np.asarray(rp, dtype=float)
+                                break
+                    except Exception:
+                        pass
+
+            if ref_pred is None:
+                raise ValueError(
+                    f"Anchor correction mode requires reference_prediction, but none found "
+                    f"for dataset '{dataset_name}'. Use full-length predictions instead."
+                )
+
+            # Interpolate anchor offsets to full horizon
+            anchor_x = np.linspace(0, H - 1, len(anchors))
+            interp_x = np.arange(H, dtype=float)
+            offsets = np.interp(interp_x, anchor_x, anchors)
+
+            # Build residual = reference + offset
+            arr = ref_pred + offsets
+            print(
+                f"[info] Anchor mode: expanded {n} anchor offsets to {H} residuals "
+                f"(offset range=[{offsets.min():.3f}, {offsets.max():.3f}])"
+            )
+        else:
+            # Full-length mode: LLM provided all predicted_window values
+            if n != H:
+                print(f"[warn] Normalizing LLM predictions length from {n} to {H} by {'trimming' if n>H else 'padding'}")
+                if n > H:
+                    predictions = predictions[:H]
+                else:
+                    last_val = float(predictions[-1])
+                    predictions = predictions + [last_val] * (H - n)
+            arr = np.asarray(predictions, dtype=float)
+
         if not np.all(np.isfinite(arr)):
             raise ValueError("predictions must be finite numbers")
+
+        # --- Residual range bounds: clamp to training residual distribution ---
+        _apply_residual_bounds(arr, dataset_name, output_dir)
 
         ds_cfg = dataset_lookup.get(dataset_name)
         investor_packet = investigator_cache.get((dataset_name, window_offset_int))
@@ -424,6 +529,62 @@ def create_generator_agent(
         else:
             start_sequence = 0
 
+        # === Prophet 残差组装 (新增) ===
+        residual_only = arr.copy()
+        investor_packet = investigator_cache.get((dataset_name, window_offset_int), {})
+        prophet_trend_for_meta: List[float] = []
+        prophet_seas_for_meta: List[float] = []
+        if investor_packet.get("decomposition_enabled"):
+            prophet_trend = investor_packet.get("prophet_trend_forecast") or []
+            prophet_seas = investor_packet.get("prophet_seasonality_forecast") or []
+            if prophet_trend and prophet_seas and len(prophet_trend) == H and len(prophet_seas) == H:
+                prophet_trend_arr = np.asarray(prophet_trend, dtype=float)
+                prophet_seas_arr = np.asarray(prophet_seas, dtype=float)
+                prophet_trend_for_meta = prophet_trend_arr.tolist()
+                prophet_seas_for_meta = prophet_seas_arr.tolist()
+                arr = arr + prophet_trend_arr + prophet_seas_arr
+                print(f"[info] Assembled final predictions from Prophet components + LLM residuals for dataset '{dataset_name}'")
+            else:
+                print(f"[warn] Prophet components missing or mismatched for dataset '{dataset_name}' (len trend={len(prophet_trend) if prophet_trend else 0}, len seas={len(prophet_seas) if prophet_seas else 0}, H={H}); using raw LLM output as fallback.")
+
+        # Save residuals to separate file for debugging
+        residual_chunk = pd.DataFrame(
+            {
+                "time_stamp": pd.to_datetime(timestamps),
+                "prediction": residual_only.tolist(),
+                "window_offset": window_offset_int,
+                "horizon_index": list(range(H)),
+            }
+        )
+        residuals_csv = os.path.join(ds_out_dir, "residuals.csv")
+        if os.path.exists(residuals_csv):
+            try:
+                existing_res = pd.read_csv(residuals_csv)
+                residual_chunk = pd.concat([existing_res, residual_chunk], ignore_index=True)
+            except Exception:
+                pass
+        residual_chunk.to_csv(residuals_csv, index=False)
+
+        # Save Prophet combined trend + seasonality for visualization
+        components_csv = os.path.join(ds_out_dir, "prophet_components.csv")
+        if prophet_trend_for_meta or prophet_seas_for_meta:
+            comp_chunk = pd.DataFrame(
+                {
+                    "time_stamp": pd.to_datetime(timestamps),
+                    "trend_combined": prophet_trend_for_meta if prophet_trend_for_meta else [0.0] * H,
+                    "seasonality": prophet_seas_for_meta if prophet_seas_for_meta else [0.0] * H,
+                    "window_offset": window_offset_int,
+                    "horizon_index": list(range(H)),
+                }
+            )
+            if os.path.exists(components_csv):
+                try:
+                    existing_comp = pd.read_csv(components_csv)
+                    comp_chunk = pd.concat([existing_comp, comp_chunk], ignore_index=True)
+                except Exception:
+                    pass
+            comp_chunk.to_csv(components_csv, index=False)
+
         new_chunk = pd.DataFrame(
             {
                 "time_stamp": pd.to_datetime(timestamps),
@@ -450,6 +611,19 @@ def create_generator_agent(
         }
         if parsed_start_ts is not None:
             meta["segment_start_timestamp"] = parsed_start_ts.isoformat()
+        try:
+            trend_global = investor_packet.get("prophet_trend_global") or []
+            trend_local = investor_packet.get("prophet_trend_local") or []
+            meta["prophet_decomposition"] = {
+                "enabled": bool(investor_packet.get("decomposition_enabled", False)),
+                "trend_combined_mean": float(np.mean(prophet_trend_for_meta)) if prophet_trend_for_meta else None,
+                "trend_global_mean": float(np.mean(trend_global)) if trend_global else None,
+                "trend_local_mean": float(np.mean(trend_local)) if trend_local else None,
+                "seasonality_mean": float(np.mean(prophet_seas_for_meta)) if prophet_seas_for_meta else None,
+                "residual_mean": float(np.mean(residual_only)) if len(residual_only) > 0 else None,
+            }
+        except Exception:
+            pass
         try:
             meta["features_used"] = {
                 "selected_features": selected_features if isinstance(selected_features, list) else [],
