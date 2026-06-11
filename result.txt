@@ -1,30 +1,32 @@
 AlphaCast v2 — Prophet Dual-Trend Decomposition + Anchor Correction
 =====================================================================
 Branch: feature/alphacast-v2
-Commit: 677f378
+Model:  qwen 3.6-reasoner
 Config: cluster=8 (EPF), cluster=6 (long-term), cp_threshold=0.0
 
-=== Experiment Summary ===
                                                                    Δ_MAE
 Dataset        Exp   Now     MAE_b     MAE_o     Δ_MAE      MSE_b      MSE_o   sMAPE_b  sMAPE_o    Winner   Progress
 ----------------------------------------------------------------------------------------------------------------------------
-EPF_BE        2928  3024   14.9315   14.9701  + 0.0386    905.928    912.462    25.19%   24.27%  Baseline      ✅ done
-EPF_DE        2928  2928   12.7572   11.9253  - 0.8319    346.754    313.179    43.39%   40.45%      LLM ✅     ✅ done
-EPF_FR        2928  2928   13.9213   12.6151  - 1.3062   1020.595    983.343    23.21%   20.18%      LLM ✅     ✅ done
-EPF_NP        2928  2928    5.7901    4.7621  - 1.0280     66.872     51.163    13.51%   11.26%      LLM ✅     ✅ done
-EPF_PJM       2928  2928    6.7425    6.0522  - 0.6903     87.877     67.308    21.69%   20.07%      LLM ✅     ✅ done
-ETTh1         2448  2448    2.1997    2.0510  - 0.1487      8.622      7.548    26.88%   24.72%      LLM ✅     ✅ done
-ETTm1         4800  4800    1.3878    1.5198  + 0.1320      4.454      5.142    15.95%   17.12%  Baseline      ✅ done
-MOPEX         2448  2544    1.8645    1.6156  - 0.2489      7.261      6.785   107.66%  104.14%      LLM ✅     ✅ done
-WP            4800  4800   41.2784   36.1510  - 5.1275   7839.219   4104.763   101.21%  115.21%      LLM ✅     ✅ done
-SP            4800  4800    3.6598    2.9916  - 0.6681     37.157     20.807   152.80%  126.25%      LLM ✅     ✅ done
+EPF_BE        2856  2856   15.8075   15.2304  - 0.5771    832.125   1040.822    28.72%   24.52%      LLM ✅     ✅ done
+EPF_DE        2856  2856   12.8555   13.0166  + 0.1611    337.101    379.669    41.49%   41.82%  Baseline      ✅ done
+EPF_FR        2856  2856   17.1741   11.2952  - 5.8789   1288.930    924.571    29.14%   19.32%      LLM ✅     ✅ done
+EPF_NP        2856  2856    4.9650    6.8305  + 1.8655     53.294    104.220    11.82%   17.00%  Baseline      ✅ done
+EPF_PJM       2856  2856    5.6805    6.2526  + 0.5720     59.256     69.314    18.99%   20.78%  Baseline      ✅ done
+ETTh1         2448  2448    2.1569    2.2957  + 0.1388      7.906      9.574    26.84%   30.86%  Baseline      ✅ done
+ETTm1         4800  4800    1.2121    1.4289  + 0.2168      3.649      4.186    14.14%   16.28%  Baseline      ✅ done
+WP            4800  4800   43.9809   33.4372  -10.5437   6172.207   2423.229   103.40%  118.73%      LLM ✅     ✅ done
+SP            4800  4800    3.5121    4.4614  + 0.9494     35.741     39.568   149.94%  146.35%  Baseline      ✅ done
+MOPEX         2448  2448    1.6767    1.4319  - 0.2448      6.687      5.465    92.47%   83.22%      LLM ✅     ✅ done
+============================================================================================================================
+LLM wins: 4/10  (EPF_BE, EPF_FR, WP, MOPEX)
+Baseline: 6/10
 
 Legend:
   Exp    = expected test points
   Now    = actual test points predicted
   MAE_b  = baseline MAE (k-medoids DL ensemble + Prophet decomposition)
   MAE_o  = LLM-orchestrated MAE (baseline + anchor corrections)
-  Δ_MAE  = MAE_o - MAE_b (negative = LLM improved)
+  Δ_MAE  = MAE_o - MAE_b (negative = LLM wins)
   Winner = which method wins on MAE
 
 Notes:
@@ -34,3 +36,6 @@ Notes:
   - continuity_scale tuned per dataset (0.5-2.0)
   - EPF datasets: look_back=168, predicted_window=24
   - Long-term datasets: look_back=96, predicted_window=96
+  - WP: LLM大幅领先 (Δ=-10.5)，主要是baseline MSE极高(6172→2423)
+  - EPF_FR: LLM最大MAE改善 (Δ=-5.9)，但MSE仍然偏高
+  - NP/SP 变差可能与极端负残差问题有关（见conversation中NP分析）
